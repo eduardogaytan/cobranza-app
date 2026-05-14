@@ -686,3 +686,4 @@ export default function App() {
   if (ruta) return <PobladosScreen asesor={asesor} ruta={ruta} onBack={() => setRuta(null)} onSelectPoblado={p => setPoblado(p)} />;
   return <RutasScreen asesor={asesor} onLogout={handleLogout} onSelectRuta={r => setRuta(r)} />;
 }
+
