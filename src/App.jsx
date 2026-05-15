@@ -134,6 +134,16 @@ function fmt(n) {
 
 
 // ─── SEMANA HELPERS ───────────────────────────────────────────────────────────
+function getNextMonday() {
+  const today = new Date();
+  const day = today.getDay();
+  if (day === 1) return today; // Already Monday
+  const daysUntilMonday = day === 0 ? 1 : 8 - day;
+  const nextMonday = new Date(today);
+  nextMonday.setDate(today.getDate() + daysUntilMonday);
+  return nextMonday;
+}
+
 function getWeekBounds(date) {
   const d = new Date(date);
   const day = d.getDay(); // 0=sun, 1=mon
@@ -489,6 +499,7 @@ function RenovacionModal({ cliente, onClose, onSaved }) {
           abono_original: selectedCredito.abono,
           plazo: selectedCredito.plazo,
           fecha_ingreso: new Date().toISOString().split('T')[0],
+          fecha_inicio_cobro: getNextMonday().toISOString().split('T')[0],
           cobro_semana: selectedCredito.abono,
           num_semana: 1,
           domicilio: cliente.domicilio,
@@ -1040,7 +1051,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
     const load = async () => {
       try {
         const [cls, sems] = await Promise.all([
-          api(`clientes?poblado_id=eq.${poblado.id}&activo=eq.true&select=*&order=nombre`),
+          api(`clientes?poblado_id=eq.${poblado.id}&activo=eq.true&or=(fecha_inicio_cobro.is.null,fecha_inicio_cobro.lte.${new Date().toISOString().split('T')[0]})&select=*&order=nombre`),
           api("semanas?activa=eq.true&select=*&limit=1"),
         ]);
         setClientes(cls);
