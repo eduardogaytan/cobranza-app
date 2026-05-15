@@ -1122,7 +1122,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
   const totalAbonos = clientes.reduce((s, cl) => s + (parseFloat(cobros[cl.id]?.abono) || 0), 0);
   const todosEnviados = clientes.every(cl => enviados[cl.id]);
 
-  const hoyLunes = new Date().getDay() === 1;
+  const hoyLunes = true;
   const isReadOnly = selectedWeek ? !isEditable(selectedWeek.start) : false;
 
   if (loading) return (
