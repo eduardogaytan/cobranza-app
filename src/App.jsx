@@ -571,10 +571,15 @@ function RenovacionModal({ cliente, onClose, onSaved }) {
 
         {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{toast}</div>}
 
+        {saldoPendiente > 0 && (
+          <div style={{ background: "#fdecea", color: COLORS.danger, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
+            ⚠️ El cliente aún tiene saldo pendiente de {fmt(saldoPendiente)}. Solo se puede renovar cuando liquide su crédito.
+          </div>
+        )}
         <button
           onClick={renovar}
-          disabled={saving || !selectedCredito}
-          style={{ width: "100%", padding: 13, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
+          disabled={saving || !selectedCredito || saldoPendiente > 0}
+          style={{ width: "100%", padding: 13, background: saldoPendiente > 0 ? COLORS.muted : COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: saldoPendiente > 0 ? "not-allowed" : "pointer" }}
         >
           {saving ? "Procesando..." : "✓ Confirmar renovación"}
         </button>
