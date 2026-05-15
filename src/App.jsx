@@ -613,7 +613,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack }) {
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                 <div style={{ flex: 1, background: "#e8f5ee", borderRadius: 8, padding: "5px 10px" }}>
                   <div style={{ fontSize: 10, color: COLORS.muted }}>Ha pagado</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.accent }}>{fmt((cl.cobro_semana * cl.plazo) - cl.pago_con_intereses)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.accent }}>{fmt((cl.abono_original * cl.plazo) - cl.pago_con_intereses)}</div>
                 </div>
                 <div style={{ flex: 1, background: "#fdecea", borderRadius: 8, padding: "5px 10px" }}>
                   <div style={{ fontSize: 10, color: COLORS.muted }}>Saldo pendiente</div>
