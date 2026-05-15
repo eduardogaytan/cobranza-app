@@ -875,7 +875,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack }) {
   const totalAbonos = clientes.reduce((s, cl) => s + (parseFloat(cobros[cl.id]?.abono) || 0), 0);
   const todosEnviados = clientes.every(cl => enviados[cl.id]);
 
-  const hoyLunes = new Date().getDay() === 1;
+  const hoyLunes = true; // PRUEBAS - cambiar a new Date().getDay() === 1 en producción
 
   if (loading) return (
     <div className="app"><style>{css}</style><div className="loading">Cargando clientes...</div></div>
