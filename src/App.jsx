@@ -367,35 +367,147 @@ function NuevoClienteForm({ onClose, onSaved }) {
 // ─── ADMIN ───────────────────────────────────────────────────────────────────
 function AdminPanel({ asesor, onLogout }) {
   const [tab, setTab] = useState("pendientes");
-  const [cobros, setCobros] = useState([]);
+  const [cierres, setCierres] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
   const [showNuevo, setShowNuevo] = useState(false);
+  const [procesando, setProcesando] = useState(null);
 
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await api(
-        `cobros?enviado=eq.true&aprobado=eq.${tab === "aprobados" ? "true" : "false"}&select=*,cliente:clientes(nombre,codigo,poblado:poblados(nombre,ruta:rutas(nombre))),asesor:asesores(nombre)`
+      // Get cierres grouped by asesor/semana
+      const cobros = await api(
+        `cobros?enviado=eq.true&aprobado=eq.${tab === "aprobados" ? "true" : "false"}&select=*,cliente:clientes(id,nombre,codigo,cobro_semana,abono_original,pago_con_intereses,num_semana,poblado:poblados(nombre,ruta:rutas(nombre))),asesor:asesores(id,nombre)`
       );
-      setCobros(rows);
+      
+      // Group by asesor
+      const grouped = {};
+      cobros.forEach(c => {
+        const key = c.asesor?.id || 'unknown';
+        if (!grouped[key]) {
+          grouped[key] = {
+            asesor: c.asesor,
+            cobros: [],
+            totalCobrado: 0,
+            totalEsperado: 0,
+          };
+        }
+        grouped[key].cobros.push(c);
+        grouped[key].totalCobrado += parseFloat(c.abono) || 0;
+        grouped[key].totalEsperado += parseFloat(c.cliente?.cobro_semana) || 0;
+      });
+      
+      setCierres(Object.values(grouped));
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [tab]);
 
   useEffect(() => { load(); }, [load]);
 
-  const aprobar = async (id) => {
-    await api(`cobros?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ aprobado: true }), prefer: "return=minimal" });
-    showToast("✓ Aprobado");
+  const aprobarCierre = async (grupo) => {
+    setProcesando(grupo.asesor?.id);
+    try {
+      // Process each cobro and update client data
+      for (const cobro of grupo.cobros) {
+        const cl = cobro.cliente;
+        if (!cl) continue;
+        
+        const abonoPagado = parseFloat(cobro.abono) || 0;
+        const abonoOriginal = parseFloat(cl.abono_original) || 0;
+        const cobroSemanaActual = parseFloat(cl.cobro_semana) || 0;
+        const pagoConIntereses = parseFloat(cl.pago_con_intereses) || 0;
+
+        // Calculate new values
+        const nuevoCobroSemana = cobroSemanaActual + abonoOriginal - abonoPagado;
+        const nuevoPagoIntereses = pagoConIntereses - abonoPagado;
+        const nuevaNumSemana = (cl.num_semana || 0) + 1;
+        const liquidado = nuevoPagoIntereses <= 0;
+
+        // Update client
+        await api(`clientes?id=eq.${cl.id}`, {
+          method: "PATCH",
+          prefer: "return=minimal",
+          body: JSON.stringify({
+            cobro_semana: liquidado ? 0 : Math.max(0, nuevoCobroSemana),
+            pago_con_intereses: liquidado ? 0 : Math.max(0, nuevoPagoIntereses),
+            num_semana: nuevaNumSemana,
+            activo: !liquidado,
+          }),
+        });
+
+        // Mark cobro as approved
+        await api(`cobros?id=eq.${cobro.id}`, {
+          method: "PATCH",
+          prefer: "return=minimal",
+          body: JSON.stringify({ aprobado: true }),
+        });
+      }
+
+      // Also update clients with no cobro this week (accumulate debt)
+      // Get all active clients for this asesor's ruta
+      if (grupo.cobros.length > 0) {
+        const rutaId = grupo.cobros[0]?.cliente?.poblado?.ruta?.id;
+        if (rutaId) {
+          // Get semana activa
+          const sems = await api("semanas?activa=eq.true&select=*&limit=1");
+          const semana = sems[0];
+          if (semana) {
+            // Get all active clients in this ruta
+            const allClientes = await api(
+              `clientes?activo=eq.true&select=id,cobro_semana,abono_original,pago_con_intereses,num_semana,poblado:poblados(ruta_id)&poblados.ruta_id=eq.${rutaId}`
+            );
+            const cobradosIds = new Set(grupo.cobros.map(c => c.cliente?.id));
+            
+            for (const cl of allClientes) {
+              if (!cl.poblado || cl.poblado.ruta_id !== parseInt(rutaId)) continue;
+              if (cobradosIds.has(cl.id)) continue; // Already processed
+              
+              // Client had no cobro this week - accumulate debt
+              const abonoOriginal = parseFloat(cl.abono_original) || 0;
+              const nuevoCobroSemana = (parseFloat(cl.cobro_semana) || 0) + abonoOriginal;
+              const nuevaNumSemana = (cl.num_semana || 0) + 1;
+
+              await api(`clientes?id=eq.${cl.id}`, {
+                method: "PATCH",
+                prefer: "return=minimal",
+                body: JSON.stringify({
+                  cobro_semana: nuevoCobroSemana,
+                  num_semana: nuevaNumSemana,
+                }),
+              });
+            }
+          }
+        }
+      }
+
+      showToast("✓ Cierre aprobado y datos actualizados");
+      load();
+    } catch (e) {
+      showToast("Error: " + e.message);
+      console.error(e);
+    } finally {
+      setProcesando(null);
+    }
+  };
+
+  const rechazarCierre = async (grupo) => {
+    for (const cobro of grupo.cobros) {
+      await api(`cobros?id=eq.${cobro.id}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: JSON.stringify({ enviado: false }),
+      });
+    }
+    showToast("✗ Cierre rechazado");
     load();
   };
 
   const exportExcel = async () => {
     const rows = await api(
-      `cobros?enviado=eq.true&aprobado=eq.true&select=*,cliente:clientes(nombre,codigo,monto_credito,cobro_semana,domicilio,celular,poblado:poblados(nombre,ruta:rutas(nombre))),asesor:asesores(nombre)`
+      `cobros?enviado=eq.true&aprobado=eq.true&select=*,cliente:clientes(nombre,codigo,cobro_semana,domicilio,celular,poblado:poblados(nombre,ruta:rutas(nombre))),asesor:asesores(nombre)`
     );
     const headers = ["Ruta","Poblado","Código","Cliente","Domicilio","Teléfono","Cobro Semana","Abono","Pago Pendiente","Observaciones","Asesor","Fecha"];
     const lines = [headers.join(",")];
@@ -445,29 +557,66 @@ function AdminPanel({ asesor, onLogout }) {
       {showNuevo && <NuevoClienteForm onClose={() => setShowNuevo(false)} onSaved={load} />}
       {loading ? <div className="loading">Cargando...</div> : (
         <div className="screen" style={{ paddingTop: 8 }}>
-          {!cobros.length && <div className="empty">Sin registros {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
-          <div className="card">
-            {cobros.map(c => {
-              const cl = c.cliente || {};
-              const po = cl.poblado || {};
-              const ru = po.ruta || {};
-              return (
-                <div key={c.id} className="cierre-item">
-                  <div className="cierre-title">{cl.nombre}</div>
-                  <div className="cierre-meta">{ru.nombre} › {po.nombre} · Asesor: {c.asesor?.nombre}</div>
-                  <div className="cierre-meta" style={{ marginTop: 4 }}>
-                    Abono: <strong>{fmt(c.abono)}</strong> · Esperado: {fmt(cl.cobro_semana)}
-                    {c.observaciones && <> · Nota: {c.observaciones}</>}
-                  </div>
-                  {tab === "pendientes" && (
-                    <div className="cierre-actions">
-                      <button className="btn-approve" onClick={() => aprobar(c.id)}>✓ Aprobar</button>
-                    </div>
-                  )}
+          {!cierres.length && <div className="empty">Sin cierres {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
+          {cierres.map((grupo, idx) => (
+            <div key={idx} className="card" style={{ marginBottom: 12 }}>
+              {/* Cierre header */}
+              <div style={{ background: COLORS.primary, padding: "12px 16px", borderRadius: "12px 12px 0 0" }}>
+                <div style={{ color: "white", fontWeight: 700, fontSize: 15 }}>
+                  {grupo.asesor?.nombre}
                 </div>
-              );
-            })}
-          </div>
+                <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, marginTop: 2 }}>
+                  {grupo.cobros.length} clientes · Cobrado: {fmt(grupo.totalCobrado)} / {fmt(grupo.totalEsperado)}
+                </div>
+                <div style={{ marginTop: 8, height: 4, background: "rgba(255,255,255,0.2)", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${Math.min(100, grupo.totalEsperado ? (grupo.totalCobrado/grupo.totalEsperado)*100 : 0)}%`, background: "#4ade80", borderRadius: 4 }} />
+                </div>
+              </div>
+
+              {/* Client list */}
+              {grupo.cobros.map(c => {
+                const cl = c.cliente || {};
+                const po = cl.poblado || {};
+                return (
+                  <div key={c.id} className="cierre-item">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div>
+                        <div className="cierre-title">{cl.nombre}</div>
+                        <div className="cierre-meta">{po.nombre}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: parseFloat(c.abono) > 0 ? COLORS.accent : COLORS.danger }}>
+                          {fmt(c.abono)}
+                        </div>
+                        <div style={{ fontSize: 11, color: COLORS.muted }}>/ {fmt(cl.cobro_semana)}</div>
+                      </div>
+                    </div>
+                    {c.observaciones && <div className="cierre-meta" style={{ marginTop: 4, fontStyle: "italic" }}>📝 {c.observaciones}</div>}
+                  </div>
+                );
+              })}
+
+              {/* Actions */}
+              {tab === "pendientes" && (
+                <div className="cierre-actions" style={{ padding: "12px 16px" }}>
+                  <button
+                    className="btn-reject"
+                    onClick={() => rechazarCierre(grupo)}
+                    disabled={procesando === grupo.asesor?.id}
+                  >
+                    ✗ Rechazar
+                  </button>
+                  <button
+                    className="btn-approve"
+                    onClick={() => aprobarCierre(grupo)}
+                    disabled={procesando === grupo.asesor?.id}
+                  >
+                    {procesando === grupo.asesor?.id ? "Procesando..." : "✓ Aprobar cierre"}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
       <Toast msg={toast} />
