@@ -536,15 +536,11 @@ function RenovacionModal({ cliente, onClose, onSaved }) {
             const c = creditos.find(c => c.id === parseInt(e.target.value));
             setSelectedCredito(c || null);
           }}>
-            <option value="">-- Selecciona --</option>
-            {[14, 16, 20].map(plazo => (
-              <optgroup key={plazo} label={`Plazo ${plazo} semanas`}>
-                {creditos.filter(c => c.plazo === plazo).map(c => (
-                  <option key={c.id} value={c.id}>
-                    ${c.monto.toLocaleString('es-MX')} — Abono: ${c.abono.toLocaleString('es-MX')} — Total: ${c.total_credito.toLocaleString('es-MX')}
-                  </option>
-                ))}
-              </optgroup>
+            <option value="">-- Selecciona crédito --</option>
+            {creditos.map(c => (
+              <option key={c.id} value={c.id}>
+                ${c.monto.toLocaleString('es-MX')} · {c.plazo} sem · Abono: ${c.abono.toLocaleString('es-MX')} · Total: ${c.total_credito.toLocaleString('es-MX')}
+              </option>
             ))}
           </select>
         </div>
