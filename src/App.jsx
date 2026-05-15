@@ -610,6 +610,16 @@ function CobrosScreen({ asesor, ruta, poblado, onBack }) {
                   {pagado && !yaEnviado && <span className="badge badge-blue">Abonado</span>}
                 </div>
               </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <div style={{ flex: 1, background: "#e8f5ee", borderRadius: 8, padding: "5px 10px" }}>
+                  <div style={{ fontSize: 10, color: COLORS.muted }}>Ha pagado</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.accent }}>{fmt((cl.cobro_semana * cl.plazo) - cl.pago_con_intereses)}</div>
+                </div>
+                <div style={{ flex: 1, background: "#fdecea", borderRadius: 8, padding: "5px 10px" }}>
+                  <div style={{ fontSize: 10, color: COLORS.muted }}>Saldo pendiente</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.danger }}>{fmt(cl.pago_con_intereses)}</div>
+                </div>
+              </div>
               <div className="cobro-meta">
                 <span>Plazo: {cl.plazo} sem</span>
                 <span>Sem {cl.num_semana}</span>
@@ -686,4 +696,3 @@ export default function App() {
   if (ruta) return <PobladosScreen asesor={asesor} ruta={ruta} onBack={() => setRuta(null)} onSelectPoblado={p => setPoblado(p)} />;
   return <RutasScreen asesor={asesor} onLogout={handleLogout} onSelectRuta={r => setRuta(r)} />;
 }
-
