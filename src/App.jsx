@@ -987,7 +987,7 @@ function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado, selectedWeek, o
   useEffect(() => {
     const load = async () => {
       try {
-        const pobs = await api(`poblados?ruta_id=eq.${ruta.id}&select=*,clientes(id)`);
+        const pobs = await api(`poblados?ruta_id=eq.${ruta.id}&select=*,clientes(id,activo,fecha_inicio_cobro)`);
         setPoblados(pobs);
       } catch (e) { console.error(e); }
       setLoading(false);
@@ -1021,7 +1021,7 @@ function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado, selectedWeek, o
               <div key={p.id} className="list-item" onClick={() => onSelectPoblado(p)}>
                 <div>
                   <div className="list-item-name">{p.nombre}</div>
-                  <div className="list-item-sub">{(p.clientes || []).length} clientes</div>
+                  <div className="list-item-sub">{(p.clientes || []).filter(c => c.activo && (!c.fecha_inicio_cobro || c.fecha_inicio_cobro <= new Date().toISOString().split('T')[0])).length} clientes</div>
                 </div>
                 <div className="list-item-arrow">›</div>
               </div>
