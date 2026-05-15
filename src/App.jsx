@@ -132,6 +132,83 @@ function fmt(n) {
   return "$" + Number(n).toLocaleString("es-MX", { maximumFractionDigits: 0 });
 }
 
+
+// ─── SEMANA HELPERS ───────────────────────────────────────────────────────────
+function getWeekBounds(date) {
+  const d = new Date(date);
+  const day = d.getDay(); // 0=sun, 1=mon
+  const diff = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { start: monday, end: sunday };
+}
+
+function formatWeekLabel(start, end) {
+  const opts = { day: 'numeric', month: 'short' };
+  return `${start.toLocaleDateString('es-MX', opts)} – ${end.toLocaleDateString('es-MX', opts)}`;
+}
+
+function toDateStr(date) {
+  return date.toISOString().split('T')[0];
+}
+
+function isEditable(weekStart) {
+  const today = new Date();
+  const todayStr = toDateStr(today);
+  const startStr = toDateStr(weekStart);
+  
+  // Current week always editable
+  const { start: currentStart } = getWeekBounds(today);
+  const currentStr = toDateStr(currentStart);
+  
+  // Previous week editable only on Monday
+  const { start: prevStart } = getWeekBounds(new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000));
+  const prevStr = toDateStr(prevStart);
+  const isMonday = today.getDay() === 1;
+  
+  return startStr === currentStr || (isMonday && startStr === prevStr);
+}
+
+// ─── WEEK SELECTOR COMPONENT ─────────────────────────────────────────────────
+function WeekSelector({ selectedWeek, onSelect }) {
+  const [weeks, setWeeks] = useState([]);
+
+  useEffect(() => {
+    // Generate last 8 weeks + current
+    const today = new Date();
+    const weekList = [];
+    for (let i = 0; i < 8; i++) {
+      const d = new Date(today.getTime() - i * 7 * 24 * 60 * 60 * 1000);
+      const { start, end } = getWeekBounds(d);
+      weekList.push({ start, end, label: formatWeekLabel(start, end) });
+    }
+    setWeeks(weekList);
+    if (!selectedWeek) onSelect(weekList[0]);
+  }, []);
+
+  return (
+    <div style={{ padding: "8px 16px", background: "#f4f6f9", borderBottom: `1px solid ${COLORS.border}` }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", marginBottom: 6 }}>Semana de cobranza</div>
+      <select
+        style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, background: "white", color: COLORS.text }}
+        value={selectedWeek ? toDateStr(selectedWeek.start) : ""}
+        onChange={e => {
+          const w = weeks.find(w => toDateStr(w.start) === e.target.value);
+          if (w) onSelect(w);
+        }}
+      >
+        {weeks.map((w, i) => (
+          <option key={i} value={toDateStr(w.start)}>
+            {i === 0 ? `Semana actual: ${w.label}` : w.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function Toast({ msg }) {
   if (!msg) return null;
   return <div className="toast">{msg}</div>;
@@ -777,7 +854,7 @@ function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado }) {
 }
 
 // ─── ASESOR: COBROS ───────────────────────────────────────────────────────────
-function CobrosScreen({ asesor, ruta, poblado, onBack }) {
+function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
   const [clientes, setClientes] = useState([]);
   const [semana, setSemana] = useState(null);
   const [cobros, setCobros] = useState({});
@@ -800,6 +877,8 @@ function CobrosScreen({ asesor, ruta, poblado, onBack }) {
         setClientes(cls);
         const sem = sems[0] || null;
         setSemana(sem);
+        // If selectedWeek differs from active semana, fetch or create semana for that week
+
 
         if (sem) {
           const existing = await api(
@@ -876,6 +955,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack }) {
   const todosEnviados = clientes.every(cl => enviados[cl.id]);
 
   const hoyLunes = true; // PRUEBAS - cambiar a new Date().getDay() === 1 en producción
+  const isReadOnly = selectedWeek ? !isEditable(selectedWeek.start) : false;
 
   if (loading) return (
     <div className="app"><style>{css}</style><div className="loading">Cargando clientes...</div></div>
@@ -919,7 +999,12 @@ function CobrosScreen({ asesor, ruta, poblado, onBack }) {
         </div>
       )}
 
-      {todosEnviados && (
+      {isReadOnly && (
+        <div style={{ padding: "8px 16px", background: "#fef3e8", margin: "0 16px 8px", borderRadius: 10, fontSize: 13, color: COLORS.warn, fontWeight: 600 }}>
+          📋 Semana anterior — solo lectura
+        </div>
+      )}
+      {todosEnviados && !isReadOnly && (
         <div style={{ padding: "8px 16px", background: "#e8f5ee", margin: "0 16px 8px", borderRadius: 10, fontSize: 13, color: COLORS.accent, fontWeight: 600 }}>
           ✓ Cierre enviado — pendiente de aprobación
         </div>
@@ -982,7 +1067,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack }) {
         })}
       </div>
 
-      {!todosEnviados && (
+      {!todosEnviados && !isReadOnly && (
         <div className="bottom-bar">
           <button className="btn-save" onClick={() => guardar(false)} disabled={saving}>
             {saving ? "Guardando..." : "💾 Pre-guardar"}
@@ -1010,6 +1095,7 @@ export default function App() {
   });
   const [ruta, setRuta] = useState(null);
   const [poblado, setPoblado] = useState(null);
+  const [selectedWeek, setSelectedWeek] = useState(null);
 
   const handleLogin = (a) => {
     localStorage.setItem("asesor_session", JSON.stringify(a));
@@ -1025,7 +1111,7 @@ export default function App() {
 
   if (!asesor) return <><style>{css}</style><Login onLogin={handleLogin} /></>;
   if (asesor.es_admin) return <AdminPanel asesor={asesor} onLogout={handleLogout} />;
-  if (poblado) return <CobrosScreen asesor={asesor} ruta={ruta} poblado={poblado} onBack={() => setPoblado(null)} />;
-  if (ruta) return <PobladosScreen asesor={asesor} ruta={ruta} onBack={() => setRuta(null)} onSelectPoblado={p => setPoblado(p)} />;
+  if (poblado) return <CobrosScreen asesor={asesor} ruta={ruta} poblado={poblado} onBack={() => setPoblado(null)} selectedWeek={selectedWeek} />;
+  if (ruta) return <PobladosScreen asesor={asesor} ruta={ruta} onBack={() => setRuta(null)} onSelectPoblado={p => setPoblado(p)} selectedWeek={selectedWeek} onSelectWeek={setSelectedWeek} />;
   return <RutasScreen asesor={asesor} onLogout={handleLogout} onSelectRuta={r => setRuta(r)} />;
 }
