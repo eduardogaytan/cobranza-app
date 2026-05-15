@@ -441,6 +441,152 @@ function NuevoClienteForm({ onClose, onSaved }) {
   );
 }
 
+
+// ─── RENOVACION MODAL ─────────────────────────────────────────────────────────
+function RenovacionModal({ cliente, onClose, onSaved }) {
+  const [creditos, setCreditos] = useState([]);
+  const [selectedCredito, setSelectedCredito] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
+
+  useEffect(() => {
+    api("tipos_credito?select=*&order=monto,plazo").then(setCreditos).catch(console.error);
+  }, []);
+
+  const saldoPendiente = parseFloat(cliente.pago_con_intereses) || 0;
+  const semanasRestantes = selectedCredito
+    ? Math.ceil(saldoPendiente / (parseFloat(cliente.abono_original) || 1))
+    : 0;
+  const descuento = selectedCredito
+    ? (parseFloat(cliente.abono_original) || 0) * semanasRestantes
+    : 0;
+  const montoEntrega = selectedCredito
+    ? Math.max(0, selectedCredito.monto - descuento)
+    : 0;
+
+  const renovar = async () => {
+    if (!selectedCredito) return showToast("Selecciona un crédito");
+    setSaving(true);
+    try {
+      // 1. Mark current credit as inactive
+      await api(`clientes?id=eq.${cliente.id}`, {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: JSON.stringify({ activo: false }),
+      });
+
+      // 2. Create new credit
+      await api("clientes", {
+        method: "POST",
+        body: JSON.stringify({
+          poblado_id: cliente.poblado_id,
+          codigo: cliente.codigo,
+          nombre: cliente.nombre,
+          monto_credito: selectedCredito.monto,
+          pago_con_intereses: selectedCredito.total_credito,
+          abono_original: selectedCredito.abono,
+          plazo: selectedCredito.plazo,
+          fecha_ingreso: new Date().toISOString().split('T')[0],
+          cobro_semana: selectedCredito.abono,
+          num_semana: 1,
+          domicilio: cliente.domicilio,
+          celular: cliente.celular,
+          aval_nombre: cliente.aval_nombre,
+          aval_domicilio: cliente.aval_domicilio,
+          aval_celular: cliente.aval_celular,
+          activo: true,
+        }),
+      });
+
+      showToast("✓ Renovación registrada");
+      setTimeout(() => { onSaved(); onClose(); }, 1000);
+    } catch (e) {
+      showToast("Error: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", background: "white" };
+  const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, overflowY: "auto" }}>
+      <div style={{ background: COLORS.card, margin: "20px auto", maxWidth: 480, borderRadius: 16, padding: "20px 16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Renovación de crédito</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
+        </div>
+
+        {/* Cliente info */}
+        <div style={{ background: "#e8f0fc", borderRadius: 10, padding: "10px 14px", marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.primary }}>{cliente.nombre}</div>
+          <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 4 }}>
+            Saldo pendiente: <strong style={{ color: COLORS.danger }}>{fmt(saldoPendiente)}</strong>
+            {" · "}Abono semanal: <strong>{fmt(cliente.abono_original)}</strong>
+          </div>
+        </div>
+
+        {/* Credit selector */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={labelStyle}>Selecciona el nuevo crédito</label>
+          <select style={inputStyle} value={selectedCredito?.id || ""} onChange={e => {
+            const c = creditos.find(c => c.id === parseInt(e.target.value));
+            setSelectedCredito(c || null);
+          }}>
+            <option value="">-- Selecciona --</option>
+            {[14, 16, 20].map(plazo => (
+              <optgroup key={plazo} label={`Plazo ${plazo} semanas`}>
+                {creditos.filter(c => c.plazo === plazo).map(c => (
+                  <option key={c.id} value={c.id}>
+                    ${c.monto.toLocaleString('es-MX')} — Abono: ${c.abono.toLocaleString('es-MX')} — Total: ${c.total_credito.toLocaleString('es-MX')}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+
+        {/* Calculation */}
+        {selectedCredito && (
+          <div style={{ background: "#f4f6f9", borderRadius: 10, padding: "12px 14px", marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.primary, marginBottom: 8 }}>Cálculo de renovación</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                <span style={{ color: COLORS.muted }}>Monto nuevo crédito</span>
+                <span style={{ fontWeight: 600 }}>{fmt(selectedCredito.monto)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                <span style={{ color: COLORS.muted }}>Semanas restantes × abono ({semanasRestantes} × {fmt(cliente.abono_original)})</span>
+                <span style={{ fontWeight: 600, color: COLORS.danger }}>- {fmt(descuento)}</span>
+              </div>
+              <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 6, display: "flex", justifyContent: "space-between", fontSize: 15 }}>
+                <span style={{ fontWeight: 700 }}>Monto a entregar</span>
+                <span style={{ fontWeight: 700, color: COLORS.accent }}>{fmt(montoEntrega)}</span>
+              </div>
+            </div>
+            <div style={{ marginTop: 10, padding: "8px 12px", background: "#e8f5ee", borderRadius: 8, fontSize: 12, color: COLORS.accent }}>
+              Nuevo crédito: {selectedCredito.plazo} semanas · Abono: {fmt(selectedCredito.abono)} · Total: {fmt(selectedCredito.total_credito)}
+            </div>
+          </div>
+        )}
+
+        {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{toast}</div>}
+
+        <button
+          onClick={renovar}
+          disabled={saving || !selectedCredito}
+          style={{ width: "100%", padding: 13, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
+        >
+          {saving ? "Procesando..." : "✓ Confirmar renovación"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── ADMIN ───────────────────────────────────────────────────────────────────
 function AdminPanel({ asesor, onLogout }) {
   const [tab, setTab] = useState("pendientes");
@@ -449,6 +595,7 @@ function AdminPanel({ asesor, onLogout }) {
   const [toast, setToast] = useState("");
   const [showNuevo, setShowNuevo] = useState(false);
   const [procesando, setProcesando] = useState(null);
+  const [clienteRenovar, setClienteRenovar] = useState(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
@@ -632,6 +779,7 @@ function AdminPanel({ asesor, onLogout }) {
         </button>
       </div>
       {showNuevo && <NuevoClienteForm onClose={() => setShowNuevo(false)} onSaved={load} />}
+      {clienteRenovar && <RenovacionModal cliente={clienteRenovar} onClose={() => setClienteRenovar(null)} onSaved={load} />}
       {loading ? <div className="loading">Cargando...</div> : (
         <div className="screen" style={{ paddingTop: 8 }}>
           {!cierres.length && <div className="empty">Sin cierres {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
@@ -690,6 +838,23 @@ function AdminPanel({ asesor, onLogout }) {
                   >
                     {procesando === grupo.asesor?.id ? "Procesando..." : "✓ Aprobar cierre"}
                   </button>
+                </div>
+              )}
+              {tab === "aprobados" && (
+                <div style={{ padding: "8px 16px 12px" }}>
+                  {grupo.cobros.map(c => {
+                    const cl = c.cliente || {};
+                    if (!cl.id) return null;
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => setClienteRenovar(cl)}
+                        style={{ width: "100%", marginBottom: 6, padding: "8px 12px", background: "#e8f0fc", color: COLORS.primary, border: `1px solid ${COLORS.primary}`, borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
+                      >
+                        🔄 Renovar: {cl.nombre}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -957,7 +1122,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
   const totalAbonos = clientes.reduce((s, cl) => s + (parseFloat(cobros[cl.id]?.abono) || 0), 0);
   const todosEnviados = clientes.every(cl => enviados[cl.id]);
 
-  const hoyLunes = true; // PRUEBAS - cambiar a new Date().getDay() === 1 en producción
+  const hoyLunes = new Date().getDay() === 1;
   const isReadOnly = selectedWeek ? !isEditable(selectedWeek.start) : false;
 
   if (loading) return (
