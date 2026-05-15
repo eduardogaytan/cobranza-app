@@ -187,12 +187,190 @@ function Login({ onLogin }) {
   );
 }
 
+
+// ─── NUEVO CLIENTE FORM ───────────────────────────────────────────────────────
+function NuevoClienteForm({ onClose, onSaved }) {
+  const [rutas, setRutas] = useState([]);
+  const [poblados, setPoblados] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  const [form, setForm] = useState({
+    ruta_id: "", poblado_id: "", codigo: "", nombre: "",
+    monto_credito: "", pago_con_intereses: "", abono_original: "",
+    plazo: "", fecha_ingreso: "", cobro_semana: "", num_semana: "",
+    domicilio: "", celular: "", aval_nombre: "", aval_domicilio: "", aval_celular: ""
+  });
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
+
+  useEffect(() => {
+    api("rutas?select=*&order=nombre").then(setRutas).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    if (form.ruta_id) {
+      api(`poblados?ruta_id=eq.${form.ruta_id}&select=*&order=nombre`).then(setPoblados).catch(console.error);
+    } else {
+      setPoblados([]);
+    }
+  }, [form.ruta_id]);
+
+  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const guardar = async () => {
+    if (!form.poblado_id || !form.codigo || !form.nombre || !form.monto_credito) {
+      return showToast("Llena los campos obligatorios");
+    }
+    setSaving(true);
+    try {
+      await api("clientes", {
+        method: "POST",
+        body: JSON.stringify({
+          poblado_id: parseInt(form.poblado_id),
+          codigo: form.codigo,
+          nombre: form.nombre.toUpperCase(),
+          monto_credito: parseFloat(form.monto_credito) || 0,
+          pago_con_intereses: parseFloat(form.pago_con_intereses) || 0,
+          abono_original: parseFloat(form.abono_original) || 0,
+          plazo: parseInt(form.plazo) || 0,
+          fecha_ingreso: form.fecha_ingreso || null,
+          cobro_semana: parseFloat(form.cobro_semana) || 0,
+          num_semana: parseInt(form.num_semana) || 0,
+          domicilio: form.domicilio,
+          celular: form.celular,
+          aval_nombre: form.aval_nombre,
+          aval_domicilio: form.aval_domicilio,
+          aval_celular: form.aval_celular,
+          activo: true,
+        }),
+      });
+      showToast("✓ Cliente guardado");
+      setTimeout(() => { onSaved(); onClose(); }, 1000);
+    } catch (e) {
+      showToast("Error: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none" };
+  const selectStyle = { ...inputStyle, background: "white" };
+  const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
+  const sectionStyle = { fontSize: 12, fontWeight: 700, color: COLORS.primary, textTransform: "uppercase", letterSpacing: "0.08em", padding: "12px 0 6px", borderBottom: `1px solid ${COLORS.border}`, marginBottom: 8 };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, overflowY: "auto" }}>
+      <div style={{ background: COLORS.card, margin: "20px auto", maxWidth: 480, borderRadius: 16, padding: "20px 16px", position: "relative" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Nuevo Cliente</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={sectionStyle}>Ubicación</div>
+          <div>
+            <label style={labelStyle}>Ruta *</label>
+            <select style={selectStyle} value={form.ruta_id} onChange={e => set("ruta_id", e.target.value)}>
+              <option value="">Selecciona ruta...</option>
+              {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Poblado *</label>
+            <select style={selectStyle} value={form.poblado_id} onChange={e => set("poblado_id", e.target.value)} disabled={!form.ruta_id}>
+              <option value="">Selecciona poblado...</option>
+              {poblados.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+
+          <div style={sectionStyle}>Datos del cliente</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={labelStyle}>Código *</label>
+              <input style={inputStyle} value={form.codigo} onChange={e => set("codigo", e.target.value)} placeholder="Ej. 1800" />
+            </div>
+            <div>
+              <label style={labelStyle}>Fecha ingreso</label>
+              <input style={inputStyle} type="date" value={form.fecha_ingreso} onChange={e => set("fecha_ingreso", e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>Nombre completo *</label>
+            <input style={inputStyle} value={form.nombre} onChange={e => set("nombre", e.target.value)} placeholder="NOMBRE APELLIDO APELLIDO" />
+          </div>
+          <div>
+            <label style={labelStyle}>Domicilio</label>
+            <input style={inputStyle} value={form.domicilio} onChange={e => set("domicilio", e.target.value)} placeholder="Calle # número" />
+          </div>
+          <div>
+            <label style={labelStyle}>Celular</label>
+            <input style={inputStyle} value={form.celular} onChange={e => set("celular", e.target.value)} placeholder="10 dígitos" />
+          </div>
+
+          <div style={sectionStyle}>Datos del crédito</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={labelStyle}>Monto crédito *</label>
+              <input style={inputStyle} type="number" value={form.monto_credito} onChange={e => set("monto_credito", e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label style={labelStyle}>Pago con intereses</label>
+              <input style={inputStyle} type="number" value={form.pago_con_intereses} onChange={e => set("pago_con_intereses", e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label style={labelStyle}>Abono semanal</label>
+              <input style={inputStyle} type="number" value={form.abono_original} onChange={e => set("abono_original", e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label style={labelStyle}>Plazo (semanas)</label>
+              <input style={inputStyle} type="number" value={form.plazo} onChange={e => set("plazo", e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label style={labelStyle}>Cobro semana</label>
+              <input style={inputStyle} type="number" value={form.cobro_semana} onChange={e => set("cobro_semana", e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label style={labelStyle}>Núm. semana</label>
+              <input style={inputStyle} type="number" value={form.num_semana} onChange={e => set("num_semana", e.target.value)} placeholder="0" />
+            </div>
+          </div>
+
+          <div style={sectionStyle}>Datos del aval</div>
+          <div>
+            <label style={labelStyle}>Nombre del aval</label>
+            <input style={inputStyle} value={form.aval_nombre} onChange={e => set("aval_nombre", e.target.value)} placeholder="Nombre completo" />
+          </div>
+          <div>
+            <label style={labelStyle}>Domicilio del aval</label>
+            <input style={inputStyle} value={form.aval_domicilio} onChange={e => set("aval_domicilio", e.target.value)} placeholder="Calle # número" />
+          </div>
+          <div>
+            <label style={labelStyle}>Celular del aval</label>
+            <input style={inputStyle} value={form.aval_celular} onChange={e => set("aval_celular", e.target.value)} placeholder="10 dígitos" />
+          </div>
+
+          {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{toast}</div>}
+
+          <button
+            onClick={guardar}
+            disabled={saving}
+            style={{ width: "100%", padding: 13, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer", marginTop: 4 }}
+          >
+            {saving ? "Guardando..." : "Guardar cliente"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── ADMIN ───────────────────────────────────────────────────────────────────
 function AdminPanel({ asesor, onLogout }) {
   const [tab, setTab] = useState("pendientes");
   const [cobros, setCobros] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+  const [showNuevo, setShowNuevo] = useState(false);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
 
@@ -259,6 +437,12 @@ function AdminPanel({ asesor, onLogout }) {
           </div>
         ))}
       </div>
+      <div style={{ padding: "10px 16px" }}>
+        <button onClick={() => setShowNuevo(true)} style={{ width: "100%", padding: 11, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+          + Agregar cliente nuevo
+        </button>
+      </div>
+      {showNuevo && <NuevoClienteForm onClose={() => setShowNuevo(false)} onSaved={load} />}
       {loading ? <div className="loading">Cargando...</div> : (
         <div className="screen" style={{ paddingTop: 8 }}>
           {!cobros.length && <div className="empty">Sin registros {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
