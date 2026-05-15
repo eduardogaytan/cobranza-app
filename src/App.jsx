@@ -452,6 +452,215 @@ function NuevoClienteForm({ onClose, onSaved }) {
 }
 
 
+
+// ─── CARGA EXCEL MODAL ────────────────────────────────────────────────────────
+function CargaExcelModal({ onClose, onSaved }) {
+  const [clientes, setClientes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  const [rutas, setRutas] = useState([]);
+  const [poblados, setPoblados] = useState([]);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
+
+  useEffect(() => {
+    Promise.all([
+      api("rutas?select=*"),
+      api("poblados?select=*"),
+    ]).then(([r, p]) => {
+      setRutas(r);
+      setPoblados(p);
+    }).catch(console.error);
+  }, []);
+
+  const handleFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setLoading(true);
+
+    // Load SheetJS dynamically if not already loaded
+    const loadXLSX = () => new Promise((resolve) => {
+      if (window.XLSX) return resolve();
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      script.onload = resolve;
+      document.head.appendChild(script);
+    });
+
+    loadXLSX().then(() => {
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const XLSX = window.XLSX;
+        const wb = XLSX.read(evt.target.result, { type: 'binary', cellDates: true });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
+
+        // Skip header row (row 0) and example row (row 1)
+        const rows = data.slice(1).filter(row => row[0] && row[2] && row[3]);
+        
+        const parsed = rows.map((row, i) => {
+          const rutaNombre = String(row[0] || '').trim();
+          const pobladoNombre = String(row[1] || '').trim();
+          const ruta = rutas.find(r => r.nombre.toLowerCase() === rutaNombre.toLowerCase());
+          const poblado = poblados.find(p => 
+            p.nombre.toLowerCase() === pobladoNombre.toLowerCase() && 
+            (!ruta || p.ruta_id === ruta.id)
+          );
+
+          // Parse date
+          let fecha = null;
+          if (row[8]) {
+            if (row[8] instanceof Date) {
+              fecha = row[8].toISOString().split('T')[0];
+            } else {
+              fecha = String(row[8]).trim();
+            }
+          }
+
+          const abono = parseFloat(row[6]) || 0;
+          const cobro_semana = parseFloat(row[9]) || abono;
+
+          return {
+            _row: i + 2,
+            ruta_nombre: rutaNombre,
+            poblado_nombre: pobladoNombre,
+            poblado_id: poblado?.id || null,
+            codigo: String(row[2] || '').trim(),
+            nombre: String(row[3] || '').trim().toUpperCase(),
+            monto_credito: parseFloat(row[4]) || 0,
+            pago_con_intereses: parseFloat(row[5]) || 0,
+            abono_original: abono,
+            plazo: parseInt(row[7]) || 0,
+            fecha_ingreso: fecha,
+            cobro_semana: cobro_semana,
+            num_semana: parseInt(row[10]) || 1,
+            domicilio: String(row[11] || '').trim(),
+            celular: String(row[12] || '').trim(),
+            aval_nombre: String(row[13] || '').trim(),
+            aval_domicilio: String(row[14] || '').trim(),
+            aval_celular: String(row[15] || '').trim(),
+            _valid: !!poblado && !!row[2] && !!row[3],
+            _error: !poblado ? `Poblado "${pobladoNombre}" no encontrado en "${rutaNombre}"` : !row[2] ? 'Falta código' : !row[3] ? 'Falta nombre' : null,
+          };
+        });
+
+        setClientes(parsed);
+      } catch (e) {
+        showToast("Error leyendo el archivo: " + e.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    reader.readAsBinaryString(file);
+    }); // end loadXLSX
+  };
+
+  const cargar = async () => {
+    const validos = clientes.filter(c => c._valid);
+    if (!validos.length) return showToast("No hay clientes válidos para cargar");
+    setSaving(true);
+    try {
+      for (const c of validos) {
+        await api("clientes", {
+          method: "POST",
+          body: JSON.stringify({
+            poblado_id: c.poblado_id,
+            codigo: c.codigo,
+            nombre: c.nombre,
+            monto_credito: c.monto_credito,
+            pago_con_intereses: c.pago_con_intereses,
+            abono_original: c.abono_original,
+            plazo: c.plazo,
+            fecha_ingreso: c.fecha_ingreso,
+            cobro_semana: c.cobro_semana,
+            num_semana: c.num_semana,
+            domicilio: c.domicilio,
+            celular: c.celular,
+            aval_nombre: c.aval_nombre,
+            aval_domicilio: c.aval_domicilio,
+            aval_celular: c.aval_celular,
+            activo: true,
+          }),
+        });
+      }
+      showToast(`✓ ${validos.length} clientes cargados correctamente`);
+      setTimeout(() => { onSaved(); onClose(); }, 1500);
+    } catch (e) {
+      showToast("Error: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const validos = clientes.filter(c => c._valid);
+  const invalidos = clientes.filter(c => !c._valid);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, overflowY: "auto" }}>
+      <div style={{ background: COLORS.card, margin: "20px auto", maxWidth: 480, borderRadius: 16, padding: "20px 16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Cargar clientes desde Excel</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
+        </div>
+
+        <div style={{ marginBottom: 16, padding: "12px 14px", background: "#e8f0fc", borderRadius: 10, fontSize: 13, color: COLORS.primary }}>
+          Usa la plantilla oficial. Las columnas deben ser: RUTA, POBLADO, CODIGO, NOMBRE, MONTO, PAGO CON INTERESES, ABONO, PLAZO, FECHA, COBRO SEMANA, NUM SEMANA, DOMICILIO, CELULAR, AVAL, DOM AVAL, CEL AVAL
+        </div>
+
+        <input
+          type="file"
+          accept=".xlsx,.xls"
+          onChange={handleFile}
+          style={{ width: "100%", marginBottom: 16, padding: "10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14 }}
+        />
+
+        {loading && <div style={{ textAlign: "center", color: COLORS.muted, padding: 16 }}>Leyendo archivo...</div>}
+
+        {clientes.length > 0 && (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.accent, marginBottom: 6 }}>
+                ✓ {validos.length} clientes listos para cargar
+              </div>
+              {invalidos.length > 0 && (
+                <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.danger, marginBottom: 6 }}>
+                  ⚠️ {invalidos.length} con errores (no se cargarán)
+                </div>
+              )}
+            </div>
+
+            {/* Preview list */}
+            <div style={{ maxHeight: 300, overflowY: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 10, marginBottom: 16 }}>
+              {clientes.map((c, i) => (
+                <div key={i} style={{ padding: "8px 12px", borderBottom: `1px solid ${COLORS.border}`, background: c._valid ? "white" : "#fdecea" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: c._valid ? COLORS.text : COLORS.danger }}>{c.nombre || "Sin nombre"}</div>
+                  <div style={{ fontSize: 11, color: COLORS.muted }}>
+                    {c._valid ? `${c.ruta_nombre} › ${c.poblado_nombre} · Cód. ${c.codigo} · ${fmt(c.monto_credito)}` : c._error}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{toast}</div>}
+
+        {validos.length > 0 && (
+          <button
+            onClick={cargar}
+            disabled={saving}
+            style={{ width: "100%", padding: 13, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
+          >
+            {saving ? "Cargando..." : `✓ Cargar ${validos.length} clientes`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── RENOVACION MODAL ─────────────────────────────────────────────────────────
 function RenovacionModal({ cliente, onClose, onSaved }) {
   const [creditos, setCreditos] = useState([]);
@@ -608,6 +817,7 @@ function AdminPanel({ asesor, onLogout }) {
   const [showNuevo, setShowNuevo] = useState(false);
   const [procesando, setProcesando] = useState(null);
   const [clienteRenovar, setClienteRenovar] = useState(null);
+  const [showCargaExcel, setShowCargaExcel] = useState(false);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
@@ -786,12 +996,18 @@ function AdminPanel({ asesor, onLogout }) {
         ))}
       </div>
       <div style={{ padding: "10px 16px" }}>
-        <button onClick={() => setShowNuevo(true)} style={{ width: "100%", padding: 11, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-          + Agregar cliente nuevo
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setShowNuevo(true)} style={{ flex: 1, padding: 11, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            + Cliente nuevo
+          </button>
+          <button onClick={() => setShowCargaExcel(true)} style={{ flex: 1, padding: 11, background: COLORS.accent, color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            📂 Cargar Excel
+          </button>
+        </div>
       </div>
       {showNuevo && <NuevoClienteForm onClose={() => setShowNuevo(false)} onSaved={load} />}
       {clienteRenovar && <RenovacionModal cliente={clienteRenovar} onClose={() => setClienteRenovar(null)} onSaved={load} />}
+      {showCargaExcel && <CargaExcelModal onClose={() => setShowCargaExcel(false)} onSaved={load} />}
       {loading ? <div className="loading">Cargando...</div> : (
         <div className="screen" style={{ paddingTop: 8 }}>
           {!cierres.length && <div className="empty">Sin cierres {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
