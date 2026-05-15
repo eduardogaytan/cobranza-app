@@ -803,25 +803,22 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
 }
 
 // ─── ASESOR: POBLADOS ─────────────────────────────────────────────────────────
-function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado }) {
+function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado, selectedWeek, onSelectWeek }) {
   const [poblados, setPoblados] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [semana, setSemana] = useState(null);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [pobs, sems] = await Promise.all([
-          api(`poblados?ruta_id=eq.${ruta.id}&select=*,clientes(id)`),
-          api("semanas?activa=eq.true&select=*&limit=1"),
-        ]);
+        const pobs = await api(`poblados?ruta_id=eq.${ruta.id}&select=*,clientes(id)`);
         setPoblados(pobs);
-        setSemana(sems[0] || null);
       } catch (e) { console.error(e); }
       setLoading(false);
     };
     load();
   }, [ruta]);
+
+  const editable = selectedWeek ? isEditable(selectedWeek.start) : true;
 
   return (
     <div className="app">
@@ -830,9 +827,15 @@ function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado }) {
         <button className="header-back" onClick={onBack}>‹ Rutas</button>
         <div style={{ flex: 1, marginLeft: 12 }}>
           <div className="header-title">{ruta.nombre}</div>
-          {semana && <div className="header-sub">Semana {new Date(semana.fecha_inicio).toLocaleDateString("es-MX")} – {new Date(semana.fecha_fin).toLocaleDateString("es-MX")}</div>}
+          <div className="header-sub">{selectedWeek ? selectedWeek.label : ""}</div>
         </div>
       </div>
+      <WeekSelector selectedWeek={selectedWeek} onSelect={onSelectWeek} />
+      {!editable && (
+        <div style={{ padding: "8px 16px", background: "#fef3e8", fontSize: 12, color: COLORS.warn, fontWeight: 600 }}>
+          📋 Semana anterior — solo lectura
+        </div>
+      )}
       {loading ? <div className="loading">Cargando...</div> : (
         <div className="screen">
           <div className="section-title">Poblados ({poblados.length})</div>
