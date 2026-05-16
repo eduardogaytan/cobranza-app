@@ -1116,23 +1116,20 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
         for (const r of rows) {
           // Cartera activa = suma de pago_con_intereses de clientes activos
           const clientes = await api(
-            `clientes?activo=eq.true&select=pago_con_intereses,cobro_semana,poblado_id,poblados(ruta_id)&poblados.ruta_id=eq.${r.id}`
+            `clientes?activo=eq.true&select=pago_con_intereses,cobro_semana,abono_original,poblado_id`
           );
           // Filtrar solo clientes de esta ruta
           const pobladoIds = (r.poblados || []).map(p => p.id);
           const clientesRuta = clientes.filter(c => pobladoIds.includes(c.poblado_id));
 
+          // Cartera activa = suma de saldos pendientes de todos los clientes
           const carteraActiva = clientesRuta.reduce((s, c) => s + (c.pago_con_intereses || 0), 0);
+          // Cobro semanal = suma de cobro_semana (lo que deben pagar incluyendo adeudos)
           const cobroSemana = clientesRuta.reduce((s, c) => s + (c.cobro_semana || 0), 0);
-
-          // Cartera vencida = cobros enviados y aprobados donde pago_pendiente > 0
-          const cobros = await api(
-            `cobros?enviado=eq.true&select=pago_pendiente,cobro_semana,abono,cliente:clientes(poblado_id)`
-          );
-          const cobrosRuta = cobros.filter(c => c.cliente && pobladoIds.includes(c.cliente.poblado_id));
-          const carteraVencida = cobrosRuta.reduce((s, c) => {
-            const vencido = (c.cobro_semana || 0) - (c.abono || 0);
-            return s + (vencido > 0 ? vencido : 0);
+          // Cartera vencida = suma del adeudo acumulado (cobro_semana - abono_original) para clientes con adeudo
+          const carteraVencida = clientesRuta.reduce((s, c) => {
+            const adeudo = (c.cobro_semana || 0) - (c.abono_original || 0);
+            return s + (adeudo > 0 ? adeudo : 0);
           }, 0);
 
           statsMap[r.id] = { carteraActiva, cobroSemana, carteraVencida };
