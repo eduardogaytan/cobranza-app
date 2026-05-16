@@ -1448,7 +1448,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
                 <input
                   className={`cobro-input ${pagado ? "pagado" : ""}`}
                   type="number"
-                  value={cobro.abono !== undefined && cobro.abono !== "" ? cobro.abono : (cl.cobro_semana || "")}
+                  value={cobro.id || cobro.abono !== undefined ? cobro.abono : (cl.cobro_semana || "")}
                   onChange={e => updateCobro(cl.id, "abono", e.target.value)}
                   placeholder={cl.cobro_semana || "0"}
                   disabled={yaEnviado}
