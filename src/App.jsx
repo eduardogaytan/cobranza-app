@@ -1283,7 +1283,14 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
             map[c.cliente_id] = { abono: c.abono, obs: c.observaciones || "", id: c.id };
             if (c.enviado) envMap[c.cliente_id] = true;
           });
-          setCobros(map);
+          // Set default abono to cobro_semana for clients not yet registered this week
+          const defaultMap = {};
+          cls.forEach(cl => {
+            if (!map[cl.id]) {
+              defaultMap[cl.id] = { abono: cl.cobro_semana, obs: "" };
+            }
+          });
+          setCobros({ ...defaultMap, ...map });
           setEnviados(envMap);
         }
       } catch (e) { console.error(e); }
@@ -1441,7 +1448,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
                 <input
                   className={`cobro-input ${pagado ? "pagado" : ""}`}
                   type="number"
-                  value={cobro.abono !== undefined && cobro.abono !== null ? cobro.abono : (cl.cobro_semana || "")}
+                  value={cobro.abono !== undefined && cobro.abono !== "" ? cobro.abono : (cl.cobro_semana || "")}
                   onChange={e => updateCobro(cl.id, "abono", e.target.value)}
                   placeholder={cl.cobro_semana || "0"}
                   disabled={yaEnviado}
