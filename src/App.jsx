@@ -275,6 +275,114 @@ function Login({ onLogin }) {
 }
 
 
+
+// ─── BUSCADOR GLOBAL (ADMIN) ──────────────────────────────────────────────────
+function BuscadorGlobal() {
+  const [query, setQuery] = useState("");
+  const [resultados, setResultados] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (query.length < 2) { setResultados([]); return; }
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const rows = await api(
+          `clientes?activo=eq.true&or=(nombre.ilike.*${encodeURIComponent(query)}*,codigo.ilike.*${encodeURIComponent(query)}*)&select=id,nombre,codigo,cobro_semana,pago_con_intereses,celular,abono_original,poblado:poblados(nombre,ruta:rutas(nombre))&limit=20`
+        );
+        setResultados(rows);
+      } catch(e) { console.error(e); }
+      setLoading(false);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  return (
+    <div style={{ padding: "12px 16px" }}>
+      <div style={{ position: "relative", marginBottom: 8 }}>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="🔍 Buscar por nombre o código..."
+          style={{ width: "100%", padding: "10px 14px", border: `1px solid ${COLORS.border}`, borderRadius: 10, fontSize: 15, outline: "none", boxSizing: "border-box" }}
+        />
+        {query && (
+          <button onClick={() => setQuery("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", fontSize: 18, cursor: "pointer", color: COLORS.muted }}>✕</button>
+        )}
+      </div>
+      {loading && <div style={{ textAlign: "center", color: COLORS.muted, fontSize: 13, padding: 8 }}>Buscando...</div>}
+      {!loading && query.length >= 2 && resultados.length === 0 && (
+        <div style={{ textAlign: "center", color: COLORS.muted, fontSize: 13, padding: 8 }}>Sin resultados</div>
+      )}
+      {resultados.length > 0 && (
+        <div className="card">
+          {resultados.map(cl => {
+            const po = cl.poblado || {};
+            const ru = po.ruta || {};
+            const vencido = (cl.cobro_semana || 0) - (cl.abono_original || 0);
+            return (
+              <div key={cl.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.text }}>{cl.nombre}</div>
+                    <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>Cód. {cl.codigo} · {ru.nombre} › {po.nombre}</div>
+                    {cl.celular && <div style={{ fontSize: 12, color: COLORS.muted }}>📞 {cl.celular}</div>}
+                  </div>
+                  <div style={{ textAlign: "right", marginLeft: 8 }}>
+                    <div style={{ fontSize: 12, color: COLORS.muted }}>Cobro sem.</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.primary }}>{fmt(cl.cobro_semana)}</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <div style={{ flex: 1, background: "#fdecea", borderRadius: 8, padding: "5px 10px" }}>
+                    <div style={{ fontSize: 10, color: COLORS.muted }}>Saldo pendiente</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.danger }}>{fmt(cl.pago_con_intereses)}</div>
+                  </div>
+                  <div style={{ flex: 1, background: vencido > 0 ? "#fef3e8" : "#e8f5ee", borderRadius: 8, padding: "5px 10px" }}>
+                    <div style={{ fontSize: 10, color: COLORS.muted }}>Cartera vencida</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: vencido > 0 ? COLORS.warn : COLORS.accent }}>{fmt(Math.max(0, vencido))}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── BUSCADOR EN POBLADO (ASESOR) ────────────────────────────────────────────
+function BuscadorPoblado({ pobladoId, clientes, onFiltrar }) {
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (!query) { onFiltrar(clientes); return; }
+    const q = query.toLowerCase();
+    onFiltrar(clientes.filter(cl =>
+      cl.nombre.toLowerCase().includes(q) || cl.codigo.toLowerCase().includes(q)
+    ));
+  }, [query, clientes]);
+
+  return (
+    <div style={{ padding: "8px 16px", background: "#f4f6f9", borderBottom: `1px solid ${COLORS.border}` }}>
+      <div style={{ position: "relative" }}>
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="🔍 Buscar cliente..."
+          style={{ width: "100%", padding: "8px 14px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" }}
+        />
+        {query && (
+          <button onClick={() => setQuery("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", fontSize: 16, cursor: "pointer", color: COLORS.muted }}>✕</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── NUEVO CLIENTE FORM ───────────────────────────────────────────────────────
 function NuevoClienteForm({ onClose, onSaved }) {
   const [rutas, setRutas] = useState([]);
@@ -989,9 +1097,9 @@ function AdminPanel({ asesor, onLogout }) {
         </div>
       </div>
       <div className="admin-tabs">
-        {["pendientes","aprobados"].map(t => (
+        {["pendientes","aprobados","buscar"].map(t => (
           <div key={t} className={`admin-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {t === "pendientes" ? "Por revisar" : "Aprobados"}
+            {t === "pendientes" ? "Por revisar" : t === "aprobados" ? "Aprobados" : "🔍 Buscar"}
           </div>
         ))}
       </div>
@@ -1008,7 +1116,7 @@ function AdminPanel({ asesor, onLogout }) {
       {showNuevo && <NuevoClienteForm onClose={() => setShowNuevo(false)} onSaved={load} />}
       {clienteRenovar && <RenovacionModal cliente={clienteRenovar} onClose={() => setClienteRenovar(null)} onSaved={load} />}
       {showCargaExcel && <CargaExcelModal onClose={() => setShowCargaExcel(false)} onSaved={load} />}
-      {loading ? <div className="loading">Cargando...</div> : (
+      {tab === "buscar" ? <BuscadorGlobal /> : loading ? <div className="loading">Cargando...</div> : (
         <div className="screen" style={{ paddingTop: 8 }}>
           {!cierres.length && <div className="empty">Sin cierres {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
           {cierres.map((grupo, idx) => (
@@ -1249,6 +1357,7 @@ function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado, selectedWeek, o
 // ─── ASESOR: COBROS ───────────────────────────────────────────────────────────
 function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
   const [clientes, setClientes] = useState([]);
+  const [clientesFiltrados, setClientesFiltrados] = useState([]);
   const [semana, setSemana] = useState(null);
   const [cobros, setCobros] = useState({});
   const [loading, setLoading] = useState(true);
@@ -1267,7 +1376,18 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
           api(`clientes?poblado_id=eq.${poblado.id}&activo=eq.true&or=(fecha_inicio_cobro.is.null,fecha_inicio_cobro.lte.${new Date().toISOString().split('T')[0]})&select=*&order=nombre`),
           api("semanas?activa=eq.true&select=*&limit=1"),
         ]);
+        // Initialize cobros with cobro_semana as default for all clients
+        setCobros(prev => {
+          const defaults = {};
+          cls.forEach(cl => {
+            if (!prev[cl.id]) {
+              defaults[cl.id] = { abono: cl.cobro_semana, obs: "" };
+            }
+          });
+          return { ...defaults, ...prev };
+        });
         setClientes(cls);
+        setClientesFiltrados(cls);
         const sem = sems[0] || null;
         setSemana(sem);
         // If selectedWeek differs from active semana, fetch or create semana for that week
@@ -1365,6 +1485,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
         </div>
       </div>
 
+      <BuscadorPoblado pobladoId={poblado.id} clientes={clientes} onFiltrar={setClientesFiltrados} />
       <div style={{ padding: "12px 16px" }}>
         <div className="summary-card">
           <div className="summary-row">
@@ -1404,7 +1525,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
       )}
 
       <div className="card" style={{ margin: "0 16px", marginBottom: 80 }}>
-        {clientes.map(cl => {
+        {clientesFiltrados.map(cl => {
           const cobro = cobros[cl.id] || {};
           const abono = parseFloat(cobro.abono) || 0;
           const pagado = abono > 0;
@@ -1441,7 +1562,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
                 <input
                   className={`cobro-input ${pagado ? "pagado" : ""}`}
                   type="number"
-                  value={cobros[cl.id] ? (cobro.abono ?? "") : (cl.cobro_semana || "")}
+                  value={cobro.abono ?? ""}
                   onChange={e => updateCobro(cl.id, "abono", e.target.value)}
                   placeholder={cl.cobro_semana || "0"}
                   disabled={yaEnviado}
