@@ -561,6 +561,308 @@ function NuevoClienteForm({ onClose, onSaved }) {
 
 
 
+
+// ─── REPORTE SEMANAL ──────────────────────────────────────────────────────────
+function ReporteSemanal({ onClose }) {
+  const [semanas, setSemanas] = useState([]);
+  const [semanaSeleccionada, setSemanaSeleccionada] = useState(null);
+  const [generando, setGenerando] = useState(false);
+  const [toast, setToast] = useState("");
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
+
+  useEffect(() => {
+    // Generate last 8 weeks
+    const today = new Date();
+    const lista = [];
+    for (let i = 0; i < 8; i++) {
+      const d = new Date(today.getTime() - i * 7 * 24 * 60 * 60 * 1000);
+      const { start, end } = getWeekBounds(d);
+      lista.push({ start, end, label: formatWeekLabel(start, end) });
+    }
+    setSemanas(lista);
+    setSemanaSeleccionada(lista[0]);
+  }, []);
+
+  const loadJsPDF = () => new Promise((resolve) => {
+    if (window.jspdf) return resolve(window.jspdf.jsPDF);
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    script.onload = () => resolve(window.jspdf.jsPDF);
+    document.head.appendChild(script);
+  });
+
+  const loadAutoTable = () => new Promise((resolve) => {
+    if (window.jspdfAutoTable) return resolve();
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
+    script.onload = resolve;
+    document.head.appendChild(script);
+  });
+
+  const generarReporte = async () => {
+    if (!semanaSeleccionada) return;
+    setGenerando(true);
+    try {
+      // Load libraries
+      const JsPDF = await loadJsPDF();
+      await loadAutoTable();
+
+      // Fetch all data
+      const startStr = toDateStr(semanaSeleccionada.start);
+      const endStr = toDateStr(semanaSeleccionada.end);
+
+      // Get all active clients with poblado and ruta
+      const clientes = await api(
+        `clientes?activo=eq.true&select=id,nombre,cobro_semana,abono_original,pago_con_intereses,poblado:poblados(nombre,ruta:rutas(nombre,estado))`
+      );
+
+      // Get approved cobros for this week
+      const cobros = await api(
+        `cobros?aprobado=eq.true&fecha_registro=gte.${startStr}&fecha_registro=lte.${endStr}T23:59:59&select=abono,cliente:clientes(id,abono_original,cobro_semana,poblado:poblados(nombre,ruta:rutas(nombre,estado)))`
+      );
+
+      // Get renovations for this week (clients created this week that replaced older ones)
+      const renovaciones = await api(
+        `clientes?fecha_ingreso=gte.${startStr}&fecha_ingreso=lte.${endStr}&select=monto_credito,poblado:poblados(nombre,ruta:rutas(nombre,estado))`
+      );
+
+      // Group by estado
+      const estados = {};
+      clientes.forEach(cl => {
+        const estado = cl.poblado?.ruta?.estado || 'Sin estado';
+        const ruta = cl.poblado?.ruta?.nombre || 'Sin ruta';
+        const poblado = cl.poblado?.nombre || 'Sin poblado';
+        if (!estados[estado]) estados[estado] = {};
+        if (!estados[estado][ruta]) estados[estado][ruta] = {};
+        if (!estados[estado][ruta][poblado]) estados[estado][ruta][poblado] = {
+          totalClientes: 0, clientesVencidos: 0, carteraVencida: 0,
+          cobranza: 0, renovaciones: 0, excobranza: 0, valorRuta: 0, carteraTotalVencida: 0
+        };
+        const p = estados[estado][ruta][poblado];
+        p.totalClientes++;
+        p.valorRuta += cl.pago_con_intereses || 0;
+        const vencido = (cl.cobro_semana || 0) - (cl.abono_original || 0);
+        if (vencido > 0) {
+          p.clientesVencidos++;
+          p.carteraVencida += vencido;
+          p.carteraTotalVencida += vencido;
+        }
+      });
+
+      cobros.forEach(co => {
+        const estado = co.cliente?.poblado?.ruta?.estado || 'Sin estado';
+        const ruta = co.cliente?.poblado?.ruta?.nombre || 'Sin ruta';
+        const poblado = co.cliente?.poblado?.nombre || 'Sin poblado';
+        if (!estados[estado]?.[ruta]?.[poblado]) return;
+        const p = estados[estado][ruta][poblado];
+        const abono = co.abono || 0;
+        const abonoOriginal = co.cliente?.abono_original || 0;
+        p.cobranza += abono;
+        if (abono > abonoOriginal) p.excobranza += abono - abonoOriginal;
+      });
+
+      renovaciones.forEach(r => {
+        const estado = r.poblado?.ruta?.estado || 'Sin estado';
+        const ruta = r.poblado?.ruta?.nombre || 'Sin ruta';
+        const poblado = r.poblado?.nombre || 'Sin poblado';
+        if (!estados[estado]?.[ruta]?.[poblado]) return;
+        estados[estado][ruta][poblado].renovaciones += r.monto_credito || 0;
+      });
+
+      // Generate one PDF per estado
+      for (const [estadoNombre, rutas] of Object.entries(estados)) {
+        const doc = new JsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+        const pageW = doc.internal.pageSize.getWidth();
+        let y = 15;
+
+        // Header
+        doc.setFillColor(26, 58, 92);
+        doc.rect(0, 0, pageW, 20, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`CIERRE SEMANAL - ${estadoNombre.toUpperCase()}`, pageW / 2, 13, { align: 'center' });
+        doc.setFontSize(9);
+        doc.text(`Semana: ${semanaSeleccionada.label}`, pageW / 2, 18, { align: 'center' });
+        y = 28;
+
+        // SECTION 1: Tabla de poblados por ruta
+        for (const [rutaNombre, poblados] of Object.entries(rutas)) {
+          doc.setTextColor(26, 58, 92);
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text(rutaNombre.toUpperCase(), 14, y);
+          y += 4;
+
+          const rows = Object.entries(poblados).map(([pob, d]) => [
+            pob,
+            d.totalClientes,
+            d.clientesVencidos,
+            `$${d.carteraVencida.toLocaleString('es-MX', { maximumFractionDigits: 0 })}`,
+          ]);
+
+          const totales = Object.values(poblados).reduce((acc, d) => {
+            acc.totalClientes += d.totalClientes;
+            acc.clientesVencidos += d.clientesVencidos;
+            acc.carteraVencida += d.carteraVencida;
+            return acc;
+          }, { totalClientes: 0, clientesVencidos: 0, carteraVencida: 0 });
+
+          rows.push([
+            'TOTAL',
+            totales.totalClientes,
+            totales.clientesVencidos,
+            `$${totales.carteraVencida.toLocaleString('es-MX', { maximumFractionDigits: 0 })}`,
+          ]);
+
+          doc.autoTable({
+            startY: y,
+            head: [['POBLACIÓN', 'CLIENTES', 'VENCIDA', 'CARTERA']],
+            body: rows,
+            theme: 'grid',
+            headStyles: { fillColor: [26, 58, 92], textColor: 255, fontSize: 8, fontStyle: 'bold' },
+            bodyStyles: { fontSize: 8 },
+            columnStyles: { 0: { cellWidth: 50 }, 1: { halign: 'center' }, 2: { halign: 'center' }, 3: { halign: 'right' } },
+            margin: { left: 14, right: 14 },
+            didParseCell: (data) => {
+              if (data.row.index === rows.length - 1) {
+                data.cell.styles.fontStyle = 'bold';
+                data.cell.styles.fillColor = [230, 240, 252];
+              }
+            },
+          });
+          y = doc.lastAutoTable.finalY + 6;
+        }
+
+        // SECTION 2: Ingreso de la semana
+        doc.addPage();
+        y = 28;
+        doc.setFillColor(26, 58, 92);
+        doc.rect(0, 0, pageW, 20, 'F');
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`INGRESO DE LA SEMANA - ${estadoNombre.toUpperCase()}`, pageW / 2, 13, { align: 'center' });
+        doc.setFontSize(9);
+        doc.text(`Semana: ${semanaSeleccionada.label}`, pageW / 2, 18, { align: 'center' });
+
+        const ingresoRows = [];
+        let totalCobranza = 0, totalRenovaciones = 0, totalExcobranza = 0, totalValorRuta = 0, totalCarteraVencida = 0;
+
+        for (const [rutaNombre, poblados] of Object.entries(rutas)) {
+          const totRuta = Object.values(poblados).reduce((acc, d) => {
+            acc.cobranza += d.cobranza;
+            acc.renovaciones += d.renovaciones;
+            acc.excobranza += d.excobranza;
+            acc.valorRuta += d.valorRuta;
+            acc.carteraVencida += d.carteraVencida;
+            return acc;
+          }, { cobranza: 0, renovaciones: 0, excobranza: 0, valorRuta: 0, carteraVencida: 0 });
+
+          const fmt2 = (n) => `$${n.toLocaleString('es-MX', { maximumFractionDigits: 2 })}`;
+          ingresoRows.push([
+            rutaNombre,
+            fmt2(totRuta.cobranza + totRuta.renovaciones + totRuta.excobranza),
+            fmt2(totRuta.cobranza),
+            fmt2(totRuta.renovaciones),
+            fmt2(totRuta.excobranza),
+            fmt2(totRuta.valorRuta),
+            fmt2(totRuta.carteraVencida),
+          ]);
+
+          totalCobranza += totRuta.cobranza;
+          totalRenovaciones += totRuta.renovaciones;
+          totalExcobranza += totRuta.excobranza;
+          totalValorRuta += totRuta.valorRuta;
+          totalCarteraVencida += totRuta.carteraVencida;
+        }
+
+        const fmt2 = (n) => `$${n.toLocaleString('es-MX', { maximumFractionDigits: 2 })}`;
+        ingresoRows.push([
+          'TOTAL',
+          fmt2(totalCobranza + totalRenovaciones + totalExcobranza),
+          fmt2(totalCobranza),
+          fmt2(totalRenovaciones),
+          fmt2(totalExcobranza),
+          fmt2(totalValorRuta),
+          fmt2(totalCarteraVencida),
+        ]);
+
+        doc.autoTable({
+          startY: y,
+          head: [['RUTA', 'TOTAL', 'COBRANZA', 'RENOVACIONES', 'EXCOBRANZA', 'VALOR RUTA', 'CARTERA VENCIDA']],
+          body: ingresoRows,
+          theme: 'grid',
+          headStyles: { fillColor: [26, 58, 92], textColor: 255, fontSize: 8, fontStyle: 'bold' },
+          bodyStyles: { fontSize: 8 },
+          columnStyles: { 0: { fontStyle: 'bold' }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
+          margin: { left: 14, right: 14 },
+          didParseCell: (data) => {
+            if (data.row.index === ingresoRows.length - 1) {
+              data.cell.styles.fontStyle = 'bold';
+              data.cell.styles.fillColor = [230, 240, 252];
+            }
+          },
+        });
+
+        // Save PDF
+        const fileName = `Reporte_${estadoNombre}_${startStr}.pdf`;
+        doc.save(fileName);
+      }
+
+      showToast(`✓ Reportes generados`);
+    } catch (e) {
+      showToast("Error: " + e.message);
+      console.error(e);
+    } finally {
+      setGenerando(false);
+    }
+  };
+
+  const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", background: "white" };
+  const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, overflowY: "auto" }}>
+      <div style={{ background: COLORS.card, margin: "20px auto", maxWidth: 480, borderRadius: 16, padding: "20px 16px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Reporte Semanal</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={labelStyle}>Selecciona la semana</label>
+          <select style={inputStyle} value={semanaSeleccionada ? toDateStr(semanaSeleccionada.start) : ""} onChange={e => {
+            const s = semanas.find(s => toDateStr(s.start) === e.target.value);
+            if (s) setSemanaSeleccionada(s);
+          }}>
+            {semanas.map((s, i) => (
+              <option key={i} value={toDateStr(s.start)}>
+                {i === 0 ? `Semana actual: ${s.label}` : s.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ background: "#e8f0fc", borderRadius: 10, padding: "12px 14px", marginBottom: 16, fontSize: 13, color: COLORS.primary }}>
+          Se generará un PDF por cada estado (Jalisco, Michoacán, Querétaro) con el cierre de la semana seleccionada.
+        </div>
+
+        {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{toast}</div>}
+
+        <button
+          onClick={generarReporte}
+          disabled={generando || !semanaSeleccionada}
+          style={{ width: "100%", padding: 13, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
+        >
+          {generando ? "Generando PDFs..." : "📄 Generar reportes PDF"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── CARGA EXCEL MODAL ────────────────────────────────────────────────────────
 function CargaExcelModal({ onClose, onSaved }) {
   const [clientes, setClientes] = useState([]);
@@ -926,6 +1228,7 @@ function AdminPanel({ asesor, onLogout }) {
   const [procesando, setProcesando] = useState(null);
   const [clienteRenovar, setClienteRenovar] = useState(null);
   const [showCargaExcel, setShowCargaExcel] = useState(false);
+  const [showReporte, setShowReporte] = useState(false);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
@@ -1104,18 +1407,22 @@ function AdminPanel({ asesor, onLogout }) {
         ))}
       </div>
       <div style={{ padding: "10px 16px" }}>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setShowNuevo(true)} style={{ flex: 1, padding: 11, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => setShowNuevo(true)} style={{ flex: 1, padding: 11, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", minWidth: 120 }}>
             + Cliente nuevo
           </button>
-          <button onClick={() => setShowCargaExcel(true)} style={{ flex: 1, padding: 11, background: COLORS.accent, color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+          <button onClick={() => setShowCargaExcel(true)} style={{ flex: 1, padding: 11, background: COLORS.accent, color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", minWidth: 120 }}>
             📂 Cargar Excel
+          </button>
+          <button onClick={() => setShowReporte(true)} style={{ flex: 1, padding: 11, background: "#7c3aed", color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", minWidth: 120 }}>
+            📄 Reporte PDF
           </button>
         </div>
       </div>
       {showNuevo && <NuevoClienteForm onClose={() => setShowNuevo(false)} onSaved={load} />}
       {clienteRenovar && <RenovacionModal cliente={clienteRenovar} onClose={() => setClienteRenovar(null)} onSaved={load} />}
       {showCargaExcel && <CargaExcelModal onClose={() => setShowCargaExcel(false)} onSaved={load} />}
+      {showReporte && <ReporteSemanal onClose={() => setShowReporte(false)} />}
       {tab === "buscar" ? <BuscadorGlobal /> : loading ? <div className="loading">Cargando...</div> : (
         <div className="screen" style={{ paddingTop: 8 }}>
           {!cierres.length && <div className="empty">Sin cierres {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
