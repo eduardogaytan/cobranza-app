@@ -566,6 +566,8 @@ function NuevoClienteForm({ onClose, onSaved }) {
 function ReporteSemanal({ onClose }) {
   const [semanas, setSemanas] = useState([]);
   const [semanaSeleccionada, setSemanaSeleccionada] = useState(null);
+  const [estadoSeleccionado, setEstadoSeleccionado] = useState("todos");
+  const [estadosDisponibles, setEstadosDisponibles] = useState([]);
   const [generando, setGenerando] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -582,6 +584,11 @@ function ReporteSemanal({ onClose }) {
     }
     setSemanas(lista);
     setSemanaSeleccionada(lista[0]);
+    // Fetch available estados
+    api("rutas?select=estado").then(rutas => {
+      const estados = [...new Set(rutas.map(r => r.estado).filter(Boolean))].sort();
+      setEstadosDisponibles(estados);
+    }).catch(console.error);
   }, []);
 
   const loadJsPDF = () => new Promise((resolve) => {
@@ -614,7 +621,7 @@ function ReporteSemanal({ onClose }) {
 
       // Get all active clients with poblado and ruta
       const clientes = await api(
-        `clientes?activo=eq.true&select=id,nombre,cobro_semana,abono_original,pago_con_intereses,poblado:poblados(nombre,ruta:rutas(nombre,estado))`
+        `clientes?activo=eq.true&select=id,nombre,cobro_semana,abono_original,pago_con_intereses,poblado:poblados(nombre,numero,ruta:rutas(id,nombre,estado))`
       );
 
       // Get approved cobros for this week
@@ -637,7 +644,9 @@ function ReporteSemanal({ onClose }) {
         if (!estados[estado][ruta]) estados[estado][ruta] = {};
         if (!estados[estado][ruta][poblado]) estados[estado][ruta][poblado] = {
           totalClientes: 0, clientesVencidos: 0, carteraVencida: 0,
-          cobranza: 0, renovaciones: 0, excobranza: 0, valorRuta: 0, carteraTotalVencida: 0
+          cobranza: 0, renovaciones: 0, excobranza: 0, valorRuta: 0, carteraTotalVencida: 0,
+          _rutaId: cl.poblado?.ruta?.id || 0,
+          _pobladoNum: cl.poblado?.numero || 0,
         };
         const p = estados[estado][ruta][poblado];
         p.totalClientes++;
@@ -670,8 +679,12 @@ function ReporteSemanal({ onClose }) {
         estados[estado][ruta][poblado].renovaciones += r.monto_credito || 0;
       });
 
-      // Generate one PDF per estado
-      for (const [estadoNombre, rutas] of Object.entries(estados)) {
+      // Generate one PDF per estado (filtered by selection)
+      const estadosFiltrados = estadoSeleccionado === "todos" 
+        ? Object.entries(estados)
+        : Object.entries(estados).filter(([e]) => e === estadoSeleccionado);
+
+      for (const [estadoNombre, rutas] of estadosFiltrados) {
         const doc = new JsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
         const pageW = doc.internal.pageSize.getWidth();
         let y = 15;
@@ -688,14 +701,19 @@ function ReporteSemanal({ onClose }) {
         y = 28;
 
         // SECTION 1: Tabla de poblados por ruta
-        for (const [rutaNombre, poblados] of Object.entries(rutas)) {
+        const rutasOrdenadas = Object.entries(rutas).sort((a, b) => {
+          const idA = Object.values(a[1])[0]?._rutaId || 0;
+          const idB = Object.values(b[1])[0]?._rutaId || 0;
+          return idA - idB;
+        });
+        for (const [rutaNombre, poblados] of rutasOrdenadas) {
           doc.setTextColor(26, 58, 92);
           doc.setFontSize(10);
           doc.setFont('helvetica', 'bold');
           doc.text(rutaNombre.toUpperCase(), 14, y);
           y += 4;
 
-          const rows = Object.entries(poblados).map(([pob, d]) => [
+          const rows = Object.entries(poblados).sort((a, b) => (a[1]._pobladoNum || 0) - (b[1]._pobladoNum || 0)).map(([pob, d]) => [
             pob,
             d.totalClientes,
             d.clientesVencidos,
@@ -750,7 +768,12 @@ function ReporteSemanal({ onClose }) {
         const ingresoRows = [];
         let totalCobranza = 0, totalRenovaciones = 0, totalExcobranza = 0, totalValorRuta = 0, totalCarteraVencida = 0;
 
-        for (const [rutaNombre, poblados] of Object.entries(rutas)) {
+        const rutasOrdenadas2 = Object.entries(rutas).sort((a, b) => {
+          const idA = Object.values(a[1])[0]?._rutaId || 0;
+          const idB = Object.values(b[1])[0]?._rutaId || 0;
+          return idA - idB;
+        });
+        for (const [rutaNombre, poblados] of rutasOrdenadas2) {
           const totRuta = Object.values(poblados).reduce((acc, d) => {
             acc.cobranza += d.cobranza;
             acc.renovaciones += d.renovaciones;
@@ -829,6 +852,16 @@ function ReporteSemanal({ onClose }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Reporte Semanal</div>
           <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={labelStyle}>Estado</label>
+          <select style={inputStyle} value={estadoSeleccionado} onChange={e => setEstadoSeleccionado(e.target.value)}>
+            <option value="todos">Todos los estados</option>
+            {estadosDisponibles.map(e => (
+              <option key={e} value={e}>{e}</option>
+            ))}
+          </select>
         </div>
 
         <div style={{ marginBottom: 16 }}>
