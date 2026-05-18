@@ -562,6 +562,194 @@ function NuevoClienteForm({ onClose, onSaved }) {
 
 
 
+
+// ─── CONFIGURACION ────────────────────────────────────────────────────────────
+function Configuracion() {
+  const [rutas, setRutas] = useState([]);
+  const [poblados, setPoblados] = useState([]);
+  const [toast, setToast] = useState("");
+  const [tab, setTab] = useState("rutas");
+  
+  // New ruta form
+  const [newRuta, setNewRuta] = useState({ nombre: "", estado: "" });
+  // New poblado form
+  const [newPoblado, setNewPoblado] = useState({ nombre: "", ruta_id: "" });
+  // Edit states
+  const [editRuta, setEditRuta] = useState(null);
+  const [editPoblado, setEditPoblado] = useState(null);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
+
+  const load = useCallback(async () => {
+    const [r, p] = await Promise.all([
+      api("rutas?select=*&order=estado,nombre"),
+      api("poblados?select=*,ruta:rutas(nombre,estado)&order=nombre"),
+    ]);
+    setRutas(r);
+    setPoblados(p);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const agregarRuta = async () => {
+    if (!newRuta.nombre || !newRuta.estado) return showToast("Llena nombre y estado");
+    await api("rutas", { method: "POST", body: JSON.stringify(newRuta) });
+    setNewRuta({ nombre: "", estado: "" });
+    showToast("✓ Ruta agregada");
+    load();
+  };
+
+  const agregarPoblado = async () => {
+    if (!newPoblado.nombre || !newPoblado.ruta_id) return showToast("Llena nombre y ruta");
+    await api("poblados", { method: "POST", body: JSON.stringify({ nombre: newPoblado.nombre, ruta_id: parseInt(newPoblado.ruta_id) }) });
+    setNewPoblado({ nombre: "", ruta_id: "" });
+    showToast("✓ Poblado agregado");
+    load();
+  };
+
+  const guardarRuta = async () => {
+    await api(`rutas?id=eq.${editRuta.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ nombre: editRuta.nombre, estado: editRuta.estado }) });
+    setEditRuta(null);
+    showToast("✓ Ruta actualizada");
+    load();
+  };
+
+  const guardarPoblado = async () => {
+    await api(`poblados?id=eq.${editPoblado.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ nombre: editPoblado.nombre, ruta_id: parseInt(editPoblado.ruta_id) }) });
+    setEditPoblado(null);
+    showToast("✓ Poblado actualizado");
+    load();
+  };
+
+  const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" };
+  const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
+
+  // Group rutas by estado
+  const rutasPorEstado = rutas.reduce((acc, r) => {
+    if (!acc[r.estado]) acc[r.estado] = [];
+    acc[r.estado].push(r);
+    return acc;
+  }, {});
+
+  return (
+    <div style={{ padding: "0 0 80px" }}>
+      {/* Tabs */}
+      <div style={{ display: "flex", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.card, marginBottom: 12 }}>
+        {["rutas", "poblados"].map(t => (
+          <div key={t} style={{ flex: 1, padding: 12, textAlign: "center", fontSize: 13, fontWeight: 600, cursor: "pointer", color: tab === t ? COLORS.primary : COLORS.muted, borderBottom: tab === t ? `2px solid ${COLORS.primary}` : "2px solid transparent" }} onClick={() => setTab(t)}>
+            {t === "rutas" ? "Rutas / Estados" : "Poblados"}
+          </div>
+        ))}
+      </div>
+
+      {toast && <div style={{ margin: "0 16px 12px", background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{toast}</div>}
+
+      {tab === "rutas" && (
+        <div style={{ padding: "0 16px" }}>
+          {/* Add new ruta */}
+          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.primary, marginBottom: 12 }}>+ Nueva Ruta / Estado</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div>
+                <label style={labelStyle}>Nombre de la ruta</label>
+                <input style={inputStyle} value={newRuta.nombre} onChange={e => setNewRuta(p => ({ ...p, nombre: e.target.value }))} placeholder="Ej. Ruta 5" />
+              </div>
+              <div>
+                <label style={labelStyle}>Estado</label>
+                <input style={inputStyle} value={newRuta.estado} onChange={e => setNewRuta(p => ({ ...p, estado: e.target.value }))} placeholder="Ej. Guanajuato" />
+              </div>
+              <button onClick={agregarRuta} style={{ padding: "10px", background: COLORS.primary, color: "white", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                Agregar ruta
+              </button>
+            </div>
+          </div>
+
+          {/* List rutas by estado */}
+          {Object.entries(rutasPorEstado).sort().map(([estado, rutasEst]) => (
+            <div key={estado} style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>{estado}</div>
+              <div className="card">
+                {rutasEst.map(r => (
+                  <div key={r.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
+                    {editRuta?.id === r.id ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <input style={inputStyle} value={editRuta.nombre} onChange={e => setEditRuta(p => ({ ...p, nombre: e.target.value }))} />
+                        <input style={inputStyle} value={editRuta.estado} onChange={e => setEditRuta(p => ({ ...p, estado: e.target.value }))} />
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={guardarRuta} style={{ flex: 1, padding: 8, background: COLORS.accent, color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Guardar</button>
+                          <button onClick={() => setEditRuta(null)} style={{ flex: 1, padding: 8, background: "white", color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
+                        <button onClick={() => setEditRuta({ ...r })} style={{ padding: "5px 12px", background: "#e8f0fc", color: COLORS.primary, border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Editar</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "poblados" && (
+        <div style={{ padding: "0 16px" }}>
+          {/* Add new poblado */}
+          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.primary, marginBottom: 12 }}>+ Nuevo Poblado</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div>
+                <label style={labelStyle}>Ruta</label>
+                <select style={{ ...inputStyle, background: "white" }} value={newPoblado.ruta_id} onChange={e => setNewPoblado(p => ({ ...p, ruta_id: e.target.value }))}>
+                  <option value="">Selecciona ruta...</option>
+                  {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre} — {r.estado}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Nombre del poblado</label>
+                <input style={inputStyle} value={newPoblado.nombre} onChange={e => setNewPoblado(p => ({ ...p, nombre: e.target.value }))} placeholder="Ej. San Pedro" />
+              </div>
+              <button onClick={agregarPoblado} style={{ padding: "10px", background: COLORS.primary, color: "white", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                Agregar poblado
+              </button>
+            </div>
+          </div>
+
+          {/* List poblados */}
+          <div className="card">
+            {poblados.map(p => (
+              <div key={p.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
+                {editPoblado?.id === p.id ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <input style={inputStyle} value={editPoblado.nombre} onChange={e => setEditPoblado(prev => ({ ...prev, nombre: e.target.value }))} />
+                    <select style={{ ...inputStyle, background: "white" }} value={editPoblado.ruta_id} onChange={e => setEditPoblado(prev => ({ ...prev, ruta_id: e.target.value }))}>
+                      {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre} — {r.estado}</option>)}
+                    </select>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={guardarPoblado} style={{ flex: 1, padding: 8, background: COLORS.accent, color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Guardar</button>
+                      <button onClick={() => setEditPoblado(null)} style={{ flex: 1, padding: 8, background: "white", color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{p.nombre}</div>
+                      <div style={{ fontSize: 12, color: COLORS.muted }}>{p.ruta?.nombre} — {p.ruta?.estado}</div>
+                    </div>
+                    <button onClick={() => setEditPoblado({ ...p, ruta_id: p.ruta_id })} style={{ padding: "5px 12px", background: "#e8f0fc", color: COLORS.primary, border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Editar</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── REPORTE SEMANAL ──────────────────────────────────────────────────────────
 function ReporteSemanal({ onClose }) {
   const [semanas, setSemanas] = useState([]);
@@ -1433,9 +1621,9 @@ function AdminPanel({ asesor, onLogout }) {
         </div>
       </div>
       <div className="admin-tabs">
-        {["pendientes","aprobados","buscar"].map(t => (
+        {["pendientes","aprobados","buscar","config"].map(t => (
           <div key={t} className={`admin-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {t === "pendientes" ? "Por revisar" : t === "aprobados" ? "Aprobados" : "🔍 Buscar"}
+            {t === "pendientes" ? "Revisar" : t === "aprobados" ? "Aprobados" : t === "buscar" ? "🔍" : "⚙️"}
           </div>
         ))}
       </div>
@@ -1456,7 +1644,7 @@ function AdminPanel({ asesor, onLogout }) {
       {clienteRenovar && <RenovacionModal cliente={clienteRenovar} onClose={() => setClienteRenovar(null)} onSaved={load} />}
       {showCargaExcel && <CargaExcelModal onClose={() => setShowCargaExcel(false)} onSaved={load} />}
       {showReporte && <ReporteSemanal onClose={() => setShowReporte(false)} />}
-      {tab === "buscar" ? <BuscadorGlobal /> : loading ? <div className="loading">Cargando...</div> : (
+      {tab === "buscar" ? <BuscadorGlobal /> : tab === "config" ? <Configuracion /> : loading ? <div className="loading">Cargando...</div> : (
         <div className="screen" style={{ paddingTop: 8 }}>
           {!cierres.length && <div className="empty">Sin cierres {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
           {cierres.map((grupo, idx) => (
