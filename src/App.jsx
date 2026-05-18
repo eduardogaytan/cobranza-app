@@ -569,6 +569,9 @@ function Configuracion() {
   const [poblados, setPoblados] = useState([]);
   const [toast, setToast] = useState("");
   const [tab, setTab] = useState("rutas");
+  const [asesores, setAsesores] = useState([]);
+  const [newAsesor, setNewAsesor] = useState({ nombre: "", email: "", password_hash: "", ruta_id: "" });
+  const [editAsesor, setEditAsesor] = useState(null);
   
   // New ruta form
   const [newRuta, setNewRuta] = useState({ nombre: "", estado: "" });
@@ -581,12 +584,14 @@ function Configuracion() {
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
 
   const load = useCallback(async () => {
-    const [r, p] = await Promise.all([
+    const [r, p, a] = await Promise.all([
       api("rutas?select=*&order=estado,nombre"),
       api("poblados?select=*,ruta:rutas(nombre,estado)&order=nombre"),
+      api("asesores?select=*,ruta:rutas(nombre,estado)&order=nombre"),
     ]);
     setRutas(r);
     setPoblados(p);
+    setAsesores(a);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -621,6 +626,27 @@ function Configuracion() {
     load();
   };
 
+  const agregarAsesor = async () => {
+    if (!newAsesor.nombre || !newAsesor.email || !newAsesor.password_hash || !newAsesor.ruta_id) return showToast("Llena todos los campos");
+    await api("asesores", { method: "POST", body: JSON.stringify({ ...newAsesor, ruta_id: parseInt(newAsesor.ruta_id), es_admin: false }) });
+    setNewAsesor({ nombre: "", email: "", password_hash: "", ruta_id: "" });
+    showToast("✓ Asesor agregado");
+    load();
+  };
+
+  const guardarAsesor = async () => {
+    await api(`asesores?id=eq.${editAsesor.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ nombre: editAsesor.nombre, email: editAsesor.email, password_hash: editAsesor.password_hash, ruta_id: parseInt(editAsesor.ruta_id) }) });
+    setEditAsesor(null);
+    showToast("✓ Asesor actualizado");
+    load();
+  };
+
+  const toggleAsesor = async (a) => {
+    await api(`asesores?id=eq.${a.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ es_admin: a.es_admin }) });
+    showToast("✓ Actualizado");
+    load();
+  };
+
   const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" };
   const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
 
@@ -635,9 +661,9 @@ function Configuracion() {
     <div style={{ padding: "0 0 80px" }}>
       {/* Tabs */}
       <div style={{ display: "flex", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.card, marginBottom: 12 }}>
-        {["rutas", "poblados"].map(t => (
+        {["rutas", "poblados", "asesores"].map(t => (
           <div key={t} style={{ flex: 1, padding: 12, textAlign: "center", fontSize: 13, fontWeight: 600, cursor: "pointer", color: tab === t ? COLORS.primary : COLORS.muted, borderBottom: tab === t ? `2px solid ${COLORS.primary}` : "2px solid transparent" }} onClick={() => setTab(t)}>
-            {t === "rutas" ? "Rutas / Estados" : "Poblados"}
+            {t === "rutas" ? "Rutas" : t === "poblados" ? "Poblados" : "Asesores"}
           </div>
         ))}
       </div>
@@ -691,6 +717,70 @@ function Configuracion() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === "asesores" && (
+        <div style={{ padding: "0 16px" }}>
+          {/* Add new asesor */}
+          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.primary, marginBottom: 12 }}>+ Nuevo Asesor</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div>
+                <label style={labelStyle}>Nombre</label>
+                <input style={inputStyle} value={newAsesor.nombre} onChange={e => setNewAsesor(p => ({ ...p, nombre: e.target.value }))} placeholder="Ej. Jal 5" />
+              </div>
+              <div>
+                <label style={labelStyle}>Correo</label>
+                <input style={inputStyle} type="email" value={newAsesor.email} onChange={e => setNewAsesor(p => ({ ...p, email: e.target.value }))} placeholder="correo@cobranza.com" />
+              </div>
+              <div>
+                <label style={labelStyle}>Contraseña</label>
+                <input style={inputStyle} value={newAsesor.password_hash} onChange={e => setNewAsesor(p => ({ ...p, password_hash: e.target.value }))} placeholder="Contraseña inicial" />
+              </div>
+              <div>
+                <label style={labelStyle}>Ruta</label>
+                <select style={{ ...inputStyle, background: "white" }} value={newAsesor.ruta_id} onChange={e => setNewAsesor(p => ({ ...p, ruta_id: e.target.value }))}>
+                  <option value="">Selecciona ruta...</option>
+                  {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre} — {r.estado}</option>)}
+                </select>
+              </div>
+              <button onClick={agregarAsesor} style={{ padding: "10px", background: COLORS.primary, color: "white", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+                Agregar asesor
+              </button>
+            </div>
+          </div>
+
+          {/* List asesores */}
+          <div className="card">
+            {asesores.filter(a => !a.es_admin).map(a => (
+              <div key={a.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
+                {editAsesor?.id === a.id ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <input style={inputStyle} value={editAsesor.nombre} onChange={e => setEditAsesor(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre" />
+                    <input style={inputStyle} value={editAsesor.email} onChange={e => setEditAsesor(p => ({ ...p, email: e.target.value }))} placeholder="Correo" />
+                    <input style={inputStyle} value={editAsesor.password_hash} onChange={e => setEditAsesor(p => ({ ...p, password_hash: e.target.value }))} placeholder="Contraseña" />
+                    <select style={{ ...inputStyle, background: "white" }} value={editAsesor.ruta_id} onChange={e => setEditAsesor(p => ({ ...p, ruta_id: e.target.value }))}>
+                      {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre} — {r.estado}</option>)}
+                    </select>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={guardarAsesor} style={{ flex: 1, padding: 8, background: COLORS.accent, color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Guardar</button>
+                      <button onClick={() => setEditAsesor(null)} style={{ flex: 1, padding: 8, background: "white", color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{a.nombre}</div>
+                      <div style={{ fontSize: 12, color: COLORS.muted }}>{a.email}</div>
+                      <div style={{ fontSize: 12, color: COLORS.muted }}>{a.ruta?.nombre} — {a.ruta?.estado}</div>
+                    </div>
+                    <button onClick={() => setEditAsesor({ ...a })} style={{ padding: "5px 12px", background: "#e8f0fc", color: COLORS.primary, border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Editar</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -1759,6 +1849,7 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
           const clientesRuta = clientes.filter(c => pobladoIds.includes(c.poblado_id));
 
           // Cartera activa = suma de saldos pendientes de todos los clientes
+          const totalClientes = clientesRuta.length;
           const carteraActiva = clientesRuta.reduce((s, c) => s + (c.pago_con_intereses || 0), 0);
           // Cobro semanal = suma de cobro_semana (lo que deben pagar incluyendo adeudos)
           const cobroSemana = clientesRuta.reduce((s, c) => s + (c.cobro_semana || 0), 0);
@@ -1768,7 +1859,7 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
             return s + (adeudo > 0 ? adeudo : 0);
           }, 0);
 
-          statsMap[r.id] = { carteraActiva, cobroSemana, carteraVencida };
+          statsMap[r.id] = { totalClientes, carteraActiva, cobroSemana, carteraVencida };
         }
         setStats(statsMap);
       } catch (e) { console.error(e); }
@@ -1804,6 +1895,10 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
                   </div>
                   {s.carteraActiva !== undefined && (
                     <div style={{ display: 'flex', gap: 8, width: '100%', flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, background: '#f0f4ff', borderRadius: 8, padding: '6px 10px' }}>
+                        <div style={{ fontSize: 10, color: COLORS.muted, marginBottom: 2 }}>Total clientes</div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.primary }}>{s.totalClientes || 0}</div>
+                      </div>
                       <div style={{ flex: 1, background: '#e8f0fc', borderRadius: 8, padding: '6px 10px' }}>
                         <div style={{ fontSize: 10, color: COLORS.muted, marginBottom: 2 }}>Cartera activa</div>
                         <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.primary }}>{fmt(s.carteraActiva)}</div>
