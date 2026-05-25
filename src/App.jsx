@@ -22,6 +22,51 @@ const api = async (path, options = {}) => {
   return text ? JSON.parse(text) : [];
 };
 
+// ─── OFFLINE MANAGER ─────────────────────────────────────────────────────────
+const OFFLINE_QUEUE_KEY = 'efecticora_offline_queue';
+
+function getOfflineQueue() {
+  try {
+    return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
+  } catch { return []; }
+}
+
+function saveOfflineQueue(queue) {
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+}
+
+function addToOfflineQueue(item) {
+  const queue = getOfflineQueue();
+  queue.push({ ...item, timestamp: Date.now() });
+  saveOfflineQueue(queue);
+}
+
+async function syncOfflineQueue() {
+  const queue = getOfflineQueue();
+  if (!queue.length) return 0;
+  let synced = 0;
+  const remaining = [];
+  for (const item of queue) {
+    try {
+      await fetch(`${SUPABASE_URL}/rest/v1/${item.path}`, {
+        method: item.method,
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Prefer': item.prefer || 'return=minimal',
+        },
+        body: item.body,
+      });
+      synced++;
+    } catch {
+      remaining.push(item);
+    }
+  }
+  saveOfflineQueue(remaining);
+  return synced;
+}
+
 const COLORS = {
   primary: "#1a3a5c",
   accent: "#2e7d52",
@@ -1982,6 +2027,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
   const [clientes, setClientes] = useState([]);
   const [clientesFiltrados, setClientesFiltrados] = useState([]);
   const [semana, setSemana] = useState(null);
+  const [todosAprobados, setTodosAprobados] = useState(false);
   const [cobros, setCobros] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2028,6 +2074,9 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
           });
           setCobros(map);
           setEnviados(envMap);
+          // Check if all sent cobros are already approved
+          const allApproved = existing.length > 0 && existing.filter(c => c.enviado).every(c => c.aprobado);
+          setTodosAprobados(allApproved);
         }
       } catch (e) { console.error(e); }
       setLoading(false);
@@ -2142,8 +2191,8 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
         </div>
       )}
       {todosEnviados && !isReadOnly && (
-        <div style={{ padding: "8px 16px", background: "#e8f5ee", margin: "0 16px 8px", borderRadius: 10, fontSize: 13, color: COLORS.accent, fontWeight: 600 }}>
-          ✓ Cierre enviado — pendiente de aprobación
+        <div style={{ padding: "8px 16px", background: todosAprobados ? "#e8f5ee" : "#fef3e8", margin: "0 16px 8px", borderRadius: 10, fontSize: 13, color: todosAprobados ? COLORS.accent : COLORS.warn, fontWeight: 600 }}>
+          {todosAprobados ? "✓ Cierre aprobado" : "⏳ Cierre enviado — pendiente de aprobación"}
         </div>
       )}
 
@@ -2230,6 +2279,24 @@ export default function App() {
   const [asesor, setAsesor] = useState(() => {
     try { return JSON.parse(localStorage.getItem("asesor_session")) || null; } catch { return null; }
   });
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [pendingSync, setPendingSync] = useState(getOfflineQueue().length);
+
+  useEffect(() => {
+    const handleOnline = async () => {
+      setIsOnline(true);
+      const synced = await syncOfflineQueue();
+      setPendingSync(getOfflineQueue().length);
+      if (synced > 0) alert(`✓ Se sincronizaron ${synced} registros pendientes`);
+    };
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
   const [ruta, setRuta] = useState(null);
   const [poblado, setPoblado] = useState(null);
   const [selectedWeek, setSelectedWeek] = useState(null);
@@ -2248,6 +2315,11 @@ export default function App() {
 
   if (!asesor) return <><style>{css}</style><Login onLogin={handleLogin} /></>;
   if (asesor.es_admin) return <AdminPanel asesor={asesor} onLogout={handleLogout} />;
+  if (!isOnline) return (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, background: '#f59e0b', color: 'white', padding: '6px 16px', fontSize: 12, fontWeight: 700, textAlign: 'center', zIndex: 9999 }}>
+      📵 Sin conexión — {pendingSync > 0 ? `${pendingSync} cobros pendientes de sincronizar` : 'los cobros se guardarán localmente'}
+    </div>
+  ) || null;
   if (poblado) return <CobrosScreen asesor={asesor} ruta={ruta} poblado={poblado} onBack={() => setPoblado(null)} selectedWeek={selectedWeek} />;
   if (ruta) return <PobladosScreen asesor={asesor} ruta={ruta} onBack={() => setRuta(null)} onSelectPoblado={p => setPoblado(p)} selectedWeek={selectedWeek} onSelectWeek={setSelectedWeek} />;
   return <RutasScreen asesor={asesor} onLogout={handleLogout} onSelectRuta={r => setRuta(r)} />;
