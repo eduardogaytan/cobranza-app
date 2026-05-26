@@ -1910,11 +1910,11 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
           const carteraActiva = clientesRuta.reduce((s, c) => s + (c.pago_con_intereses || 0), 0);
           // Cobro semanal = suma de cobro_semana (lo que deben pagar incluyendo adeudos)
           const cobroSemana = clientesRuta.reduce((s, c) => s + (c.cobro_semana || 0), 0);
-          // Cartera vencida = cobro_semana de clientes con 2 o mas pagos pendientes (cobro_semana >= abono_original * 2)
+          // Cartera vencida = cobro_semana de clientes con mas de 1 pago pendiente (cobro_semana > abono_original)
           const carteraVencida = clientesRuta.reduce((s, c) => {
             const cobro = c.cobro_semana || 0;
             const abono = c.abono_original || 0;
-            return s + (abono > 0 && cobro >= abono * 2 ? cobro : 0);
+            return s + (abono > 0 && cobro > abono ? cobro : 0);
           }, 0);
 
           statsMap[r.id] = { totalClientes, carteraActiva, cobroSemana, carteraVencida };
