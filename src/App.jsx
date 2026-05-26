@@ -1848,9 +1848,14 @@ function AdminPanel({ asesor, onLogout }) {
               )}
               {tab === "aprobados" && (
                 <div style={{ padding: "8px 16px 12px" }}>
-                  {grupo.cobros.map(c => {
+                  {grupo.cobros.filter(c => {
                     const cl = c.cliente || {};
-                    if (!cl.id) return null;
+                    // Show renovar button only if client paid their full cobro_semana
+                    const abonoPagado = parseFloat(c.abono) || 0;
+                    const cobroSemana = parseFloat(cl.cobro_semana) || 0;
+                    return cl.id && cobroSemana > 0 && abonoPagado >= cobroSemana;
+                  }).map(c => {
+                    const cl = c.cliente || {};
                     return (
                       <button
                         key={c.id}
