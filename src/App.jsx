@@ -2074,9 +2074,9 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
           });
           setCobros(map);
           setEnviados(envMap);
-          // Check if all sent cobros are already approved
-          const allApproved = existing.length > 0 && existing.filter(c => c.enviado).every(c => c.aprobado);
-          setTodosAprobados(allApproved);
+          // Check if any cobro from THIS semana is approved - if so, week is read-only
+          const anyApproved = existing.some(c => c.aprobado && c.semana_id === sem?.id);
+          setTodosAprobados(anyApproved);
         }
       } catch (e) { console.error(e); }
       setLoading(false);
