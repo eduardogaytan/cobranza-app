@@ -1433,14 +1433,21 @@ function RenovacionModal({ cliente, onClose, onSaved }) {
   const [selectedCredito, setSelectedCredito] = useState(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [clienteActual, setClienteActual] = useState(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
 
   useEffect(() => {
-    api("tipos_credito?select=*&order=monto,plazo").then(setCreditos).catch(console.error);
-  }, []);
+    Promise.all([
+      api("tipos_credito?select=*&order=monto,plazo"),
+      api(`clientes?id=eq.${cliente.id}&select=*&limit=1`),
+    ]).then(([creds, cls]) => {
+      setCreditos(creds);
+      if (cls && cls[0]) setClienteActual(cls[0]);
+    }).catch(console.error);
+  }, [cliente.id]);
 
-  const saldoPendiente = parseFloat(cliente.pago_con_intereses) || 0;
+  const saldoPendiente = parseFloat(clienteActual?.pago_con_intereses ?? cliente.pago_con_intereses) || 0;
   const semanasRestantes = selectedCredito
     ? Math.ceil(saldoPendiente / (parseFloat(cliente.abono_original) || 1))
     : 0;
