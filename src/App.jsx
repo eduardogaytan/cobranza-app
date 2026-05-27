@@ -1899,7 +1899,7 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
         for (const r of rows) {
           // Cartera activa = suma de pago_con_intereses de clientes activos
           const clientes = await api(
-            `clientes?activo=eq.true&select=pago_con_intereses,cobro_semana,abono_original,poblado_id`
+            `clientes?activo=eq.true&select=pago_con_intereses,cobro_semana,abono_original,poblado_id,fecha_ingreso,plazo`
           );
           // Filtrar solo clientes de esta ruta
           const pobladoIds = (r.poblados || []).map(p => p.id);
@@ -1911,10 +1911,19 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
           // Cobro semanal = suma de cobro_semana (lo que deben pagar incluyendo adeudos)
           const cobroSemana = clientesRuta.reduce((s, c) => s + (c.cobro_semana || 0), 0);
           // Cartera vencida = cobro_semana de clientes con mas de 1 pago pendiente (cobro_semana > abono_original)
+          const hoy = new Date();
           const carteraVencida = clientesRuta.reduce((s, c) => {
             const cobro = c.cobro_semana || 0;
             const abono = c.abono_original || 0;
-            return s + (abono > 0 && cobro > abono ? cobro : 0);
+            // Caso 1: debe mas de una semana
+            if (abono > 0 && cobro > abono) return s + cobro;
+            // Caso 2: debe 1 semana pero ya paso su plazo
+            if (cobro > 0 && c.fecha_ingreso && c.plazo) {
+              const fechaFin = new Date(c.fecha_ingreso);
+              fechaFin.setDate(fechaFin.getDate() + c.plazo * 7);
+              if (hoy > fechaFin) return s + cobro;
+            }
+            return s;
           }, 0);
 
           statsMap[r.id] = { totalClientes, carteraActiva, cobroSemana, carteraVencida };
