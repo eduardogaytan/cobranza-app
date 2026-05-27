@@ -1918,9 +1918,9 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
             // Caso 1: debe mas de una semana
             if (abono > 0 && cobro > abono) return s + cobro;
             // Caso 2: debe 1 semana pero ya paso su plazo (solo si tiene plazo definido > 0)
-            if (cobro > 0 && c.fecha_ingreso && c.plazo > 0) {
+            if (cobro > 0 && c.fecha_ingreso && parseInt(c.plazo) > 0) {
               const fechaFin = new Date(c.fecha_ingreso);
-              fechaFin.setDate(fechaFin.getDate() + c.plazo * 7);
+              fechaFin.setDate(fechaFin.getDate() + parseInt(c.plazo) * 7);
               if (hoy > fechaFin) return s + cobro;
             }
             return s;
