@@ -22,51 +22,6 @@ const api = async (path, options = {}) => {
   return text ? JSON.parse(text) : [];
 };
 
-// ─── OFFLINE MANAGER ─────────────────────────────────────────────────────────
-const OFFLINE_QUEUE_KEY = 'efecticora_offline_queue';
-
-function getOfflineQueue() {
-  try {
-    return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || '[]');
-  } catch { return []; }
-}
-
-function saveOfflineQueue(queue) {
-  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
-}
-
-function addToOfflineQueue(item) {
-  const queue = getOfflineQueue();
-  queue.push({ ...item, timestamp: Date.now() });
-  saveOfflineQueue(queue);
-}
-
-async function syncOfflineQueue() {
-  const queue = getOfflineQueue();
-  if (!queue.length) return 0;
-  let synced = 0;
-  const remaining = [];
-  for (const item of queue) {
-    try {
-      await fetch(`${SUPABASE_URL}/rest/v1/${item.path}`, {
-        method: item.method,
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Prefer': item.prefer || 'return=minimal',
-        },
-        body: item.body,
-      });
-      synced++;
-    } catch {
-      remaining.push(item);
-    }
-  }
-  saveOfflineQueue(remaining);
-  return synced;
-}
-
 const COLORS = {
   primary: "#1a3a5c",
   accent: "#2e7d52",
@@ -177,106 +132,6 @@ function fmt(n) {
   return "$" + Number(n).toLocaleString("es-MX", { maximumFractionDigits: 0 });
 }
 
-
-// ─── SEMANA HELPERS ───────────────────────────────────────────────────────────
-function getNextMonday() {
-  const today = new Date();
-  const day = today.getDay();
-  if (day === 1) return today; // Already Monday
-  const daysUntilMonday = day === 0 ? 1 : 8 - day;
-  const nextMonday = new Date(today);
-  nextMonday.setDate(today.getDate() + daysUntilMonday);
-  return nextMonday;
-}
-
-function getWeekBounds(date) {
-  const d = new Date(date);
-  const day = d.getDay(); // 0=sun, 1=mon
-  const diff = day === 0 ? -6 : 1 - day;
-  const monday = new Date(d);
-  monday.setDate(d.getDate() + diff);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  return { start: monday, end: sunday };
-}
-
-function formatWeekLabel(start, end) {
-  const opts = { day: 'numeric', month: 'short' };
-  return `${start.toLocaleDateString('es-MX', opts)} – ${end.toLocaleDateString('es-MX', opts)}`;
-}
-
-function toDateStr(date) {
-  return date.toISOString().split('T')[0];
-}
-
-function isEditable(weekStart) {
-
-  // Fecha real de México para evitar problemas de UTC en Vercel
-  const mexicoNow = new Date(
-    new Date().toLocaleString("en-US", {
-      timeZone: "America/Mexico_City"
-    })
-  );
-
-  // Inicio de semana actual
-  const { start: currentStart } = getWeekBounds(mexicoNow);
-
-  // Inicio de semana pasada
-  const prevDate = new Date(mexicoNow);
-  prevDate.setDate(prevDate.getDate() - 7);
-
-  const { start: prevStart } = getWeekBounds(prevDate);
-
-  // Formato comparable
-  const startStr = toDateStr(new Date(weekStart));
-  const currentStr = toDateStr(currentStart);
-  const prevStr = toDateStr(prevStart);
-
-  // Permitir editar semana actual y pasada
-  return (
-    startStr === currentStr ||
-    startStr === prevStr
-  );
-}
-
-// ─── WEEK SELECTOR COMPONENT ─────────────────────────────────────────────────
-function WeekSelector({ selectedWeek, onSelect }) {
-  const [weeks, setWeeks] = useState([]);
-
-  useEffect(() => {
-    // Generate last 8 weeks + current
-    const today = new Date();
-    const weekList = [];
-    for (let i = 0; i < 8; i++) {
-      const d = new Date(today.getTime() - i * 7 * 24 * 60 * 60 * 1000);
-      const { start, end } = getWeekBounds(d);
-      weekList.push({ start, end, label: formatWeekLabel(start, end) });
-    }
-    setWeeks(weekList);
-    if (!selectedWeek) onSelect(weekList[0]);
-  }, []);
-
-  return (
-    <div style={{ padding: "8px 16px", background: "#f4f6f9", borderBottom: `1px solid ${COLORS.border}` }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", marginBottom: 6 }}>Semana de cobranza</div>
-      <select
-        style={{ width: "100%", padding: "8px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, background: "white", color: COLORS.text }}
-        value={selectedWeek ? toDateStr(selectedWeek.start) : ""}
-        onChange={e => {
-          const w = weeks.find(w => toDateStr(w.start) === e.target.value);
-          if (w) onSelect(w);
-        }}
-      >
-        {weeks.map((w, i) => (
-          <option key={i} value={toDateStr(w.start)}>
-            {i === 0 ? `Semana actual: ${w.label}` : w.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
 function Toast({ msg }) {
   if (!msg) return null;
   return <div className="toast">{msg}</div>;
@@ -332,1415 +187,37 @@ function Login({ onLogin }) {
   );
 }
 
-
-
-// ─── BUSCADOR GLOBAL (ADMIN) ──────────────────────────────────────────────────
-function BuscadorGlobal() {
-  const [query, setQuery] = useState("");
-  const [resultados, setResultados] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (query.length < 2) { setResultados([]); return; }
-    const timer = setTimeout(async () => {
-      setLoading(true);
-      try {
-        const rows = await api(
-          `clientes?activo=eq.true&or=(nombre.ilike.*${encodeURIComponent(query)}*,codigo.ilike.*${encodeURIComponent(query)}*)&select=id,nombre,codigo,cobro_semana,pago_con_intereses,celular,abono_original,poblado:poblados(nombre,ruta:rutas(nombre))&limit=20`
-        );
-        setResultados(rows);
-      } catch(e) { console.error(e); }
-      setLoading(false);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [query]);
-
-  return (
-    <div style={{ padding: "12px 16px" }}>
-      <div style={{ position: "relative", marginBottom: 8 }}>
-        <input
-          type="text"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          placeholder="🔍 Buscar por nombre o código..."
-          style={{ width: "100%", padding: "10px 14px", border: `1px solid ${COLORS.border}`, borderRadius: 10, fontSize: 15, outline: "none", boxSizing: "border-box" }}
-        />
-        {query && (
-          <button onClick={() => setQuery("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", fontSize: 18, cursor: "pointer", color: COLORS.muted }}>✕</button>
-        )}
-      </div>
-      {loading && <div style={{ textAlign: "center", color: COLORS.muted, fontSize: 13, padding: 8 }}>Buscando...</div>}
-      {!loading && query.length >= 2 && resultados.length === 0 && (
-        <div style={{ textAlign: "center", color: COLORS.muted, fontSize: 13, padding: 8 }}>Sin resultados</div>
-      )}
-      {resultados.length > 0 && (
-        <div className="card">
-          {resultados.map(cl => {
-            const po = cl.poblado || {};
-            const ru = po.ruta || {};
-            const vencido = (cl.cobro_semana || 0) - (cl.abono_original || 0);
-            return (
-              <div key={cl.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.text }}>{cl.nombre}</div>
-                    <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>Cód. {cl.codigo} · {ru.nombre} › {po.nombre}</div>
-                    {cl.celular && <div style={{ fontSize: 12, color: COLORS.muted }}>📞 {cl.celular}</div>}
-                  </div>
-                  <div style={{ textAlign: "right", marginLeft: 8 }}>
-                    <div style={{ fontSize: 12, color: COLORS.muted }}>Cobro sem.</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.primary }}>{fmt(cl.cobro_semana)}</div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <div style={{ flex: 1, background: "#fdecea", borderRadius: 8, padding: "5px 10px" }}>
-                    <div style={{ fontSize: 10, color: COLORS.muted }}>Saldo pendiente</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.danger }}>{fmt(cl.pago_con_intereses)}</div>
-                  </div>
-                  <div style={{ flex: 1, background: vencido > 0 ? "#fef3e8" : "#e8f5ee", borderRadius: 8, padding: "5px 10px" }}>
-                    <div style={{ fontSize: 10, color: COLORS.muted }}>Cartera vencida</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: vencido > 0 ? COLORS.warn : COLORS.accent }}>{fmt(Math.max(0, vencido))}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── BUSCADOR EN POBLADO (ASESOR) ────────────────────────────────────────────
-function BuscadorPoblado({ pobladoId, clientes, onFiltrar }) {
-  const [query, setQuery] = useState("");
-
-  useEffect(() => {
-    if (!query) { onFiltrar(clientes); return; }
-    const q = query.toLowerCase();
-    onFiltrar(clientes.filter(cl =>
-      cl.nombre.toLowerCase().includes(q) || cl.codigo.toLowerCase().includes(q)
-    ));
-  }, [query, clientes]);
-
-  return (
-    <div style={{ padding: "8px 16px", background: "#f4f6f9", borderBottom: `1px solid ${COLORS.border}` }}>
-      <div style={{ position: "relative" }}>
-        <input
-          type="text"
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          placeholder="🔍 Buscar cliente..."
-          style={{ width: "100%", padding: "8px 14px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" }}
-        />
-        {query && (
-          <button onClick={() => setQuery("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", fontSize: 16, cursor: "pointer", color: COLORS.muted }}>✕</button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── NUEVO CLIENTE FORM ───────────────────────────────────────────────────────
-function NuevoClienteForm({ onClose, onSaved }) {
-  const [rutas, setRutas] = useState([]);
-  const [poblados, setPoblados] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState("");
-  const [form, setForm] = useState({
-    ruta_id: "", poblado_id: "", codigo: "", nombre: "",
-    monto_credito: "", pago_con_intereses: "", abono_original: "",
-    plazo: "", fecha_ingreso: "", cobro_semana: "", num_semana: "",
-    domicilio: "", celular: "", aval_nombre: "", aval_domicilio: "", aval_celular: ""
-  });
-
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
-
-  useEffect(() => {
-    api("rutas?select=*&order=nombre").then(setRutas).catch(console.error);
-  }, []);
-
-  useEffect(() => {
-    if (form.ruta_id) {
-      api(`poblados?ruta_id=eq.${form.ruta_id}&select=*&order=nombre`).then(setPoblados).catch(console.error);
-    } else {
-      setPoblados([]);
-    }
-  }, [form.ruta_id]);
-
-  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
-
-  const guardar = async () => {
-    if (!form.poblado_id || !form.codigo || !form.nombre || !form.monto_credito) {
-      return showToast("Llena los campos obligatorios");
-    }
-    setSaving(true);
-    try {
-      await api("clientes", {
-        method: "POST",
-        body: JSON.stringify({
-          poblado_id: parseInt(form.poblado_id),
-          codigo: form.codigo,
-          nombre: form.nombre.toUpperCase(),
-          monto_credito: parseFloat(form.monto_credito) || 0,
-          pago_con_intereses: parseFloat(form.pago_con_intereses) || 0,
-          abono_original: parseFloat(form.abono_original) || 0,
-          plazo: parseInt(form.plazo) || 0,
-          fecha_ingreso: form.fecha_ingreso || null,
-          cobro_semana: parseFloat(form.cobro_semana) || 0,
-          num_semana: parseInt(form.num_semana) || 0,
-          domicilio: form.domicilio,
-          celular: form.celular,
-          aval_nombre: form.aval_nombre,
-          aval_domicilio: form.aval_domicilio,
-          aval_celular: form.aval_celular,
-          activo: true,
-        }),
-      });
-      showToast("✓ Cliente guardado");
-      setTimeout(() => { onSaved(); onClose(); }, 1000);
-    } catch (e) {
-      showToast("Error: " + e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none" };
-  const selectStyle = { ...inputStyle, background: "white" };
-  const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
-  const sectionStyle = { fontSize: 12, fontWeight: 700, color: COLORS.primary, textTransform: "uppercase", letterSpacing: "0.08em", padding: "12px 0 6px", borderBottom: `1px solid ${COLORS.border}`, marginBottom: 8 };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, overflowY: "auto" }}>
-      <div style={{ background: COLORS.card, margin: "20px auto", maxWidth: 480, borderRadius: 16, padding: "20px 16px", position: "relative" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Nuevo Cliente</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={sectionStyle}>Ubicación</div>
-          <div>
-            <label style={labelStyle}>Ruta *</label>
-            <select style={selectStyle} value={form.ruta_id} onChange={e => set("ruta_id", e.target.value)}>
-              <option value="">Selecciona ruta...</option>
-              {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={labelStyle}>Poblado *</label>
-            <select style={selectStyle} value={form.poblado_id} onChange={e => set("poblado_id", e.target.value)} disabled={!form.ruta_id}>
-              <option value="">Selecciona poblado...</option>
-              {poblados.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
-          </div>
-
-          <div style={sectionStyle}>Datos del cliente</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <label style={labelStyle}>Código *</label>
-              <input style={inputStyle} value={form.codigo} onChange={e => set("codigo", e.target.value)} placeholder="Ej. 1800" />
-            </div>
-            <div>
-              <label style={labelStyle}>Fecha ingreso</label>
-              <input style={inputStyle} type="date" value={form.fecha_ingreso} onChange={e => set("fecha_ingreso", e.target.value)} />
-            </div>
-          </div>
-          <div>
-            <label style={labelStyle}>Nombre completo *</label>
-            <input style={inputStyle} value={form.nombre} onChange={e => set("nombre", e.target.value)} placeholder="NOMBRE APELLIDO APELLIDO" />
-          </div>
-          <div>
-            <label style={labelStyle}>Domicilio</label>
-            <input style={inputStyle} value={form.domicilio} onChange={e => set("domicilio", e.target.value)} placeholder="Calle # número" />
-          </div>
-          <div>
-            <label style={labelStyle}>Celular</label>
-            <input style={inputStyle} value={form.celular} onChange={e => set("celular", e.target.value)} placeholder="10 dígitos" />
-          </div>
-
-          <div style={sectionStyle}>Datos del crédito</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <label style={labelStyle}>Monto crédito *</label>
-              <input style={inputStyle} type="number" value={form.monto_credito} onChange={e => set("monto_credito", e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label style={labelStyle}>Pago con intereses</label>
-              <input style={inputStyle} type="number" value={form.pago_con_intereses} onChange={e => set("pago_con_intereses", e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label style={labelStyle}>Abono semanal</label>
-              <input style={inputStyle} type="number" value={form.abono_original} onChange={e => set("abono_original", e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label style={labelStyle}>Plazo (semanas)</label>
-              <input style={inputStyle} type="number" value={form.plazo} onChange={e => set("plazo", e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label style={labelStyle}>Cobro semana</label>
-              <input style={inputStyle} type="number" value={form.cobro_semana} onChange={e => set("cobro_semana", e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label style={labelStyle}>Núm. semana</label>
-              <input style={inputStyle} type="number" value={form.num_semana} onChange={e => set("num_semana", e.target.value)} placeholder="0" />
-            </div>
-          </div>
-
-          <div style={sectionStyle}>Datos del aval</div>
-          <div>
-            <label style={labelStyle}>Nombre del aval</label>
-            <input style={inputStyle} value={form.aval_nombre} onChange={e => set("aval_nombre", e.target.value)} placeholder="Nombre completo" />
-          </div>
-          <div>
-            <label style={labelStyle}>Domicilio del aval</label>
-            <input style={inputStyle} value={form.aval_domicilio} onChange={e => set("aval_domicilio", e.target.value)} placeholder="Calle # número" />
-          </div>
-          <div>
-            <label style={labelStyle}>Celular del aval</label>
-            <input style={inputStyle} value={form.aval_celular} onChange={e => set("aval_celular", e.target.value)} placeholder="10 dígitos" />
-          </div>
-
-          {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{toast}</div>}
-
-          <button
-            onClick={guardar}
-            disabled={saving}
-            style={{ width: "100%", padding: 13, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer", marginTop: 4 }}
-          >
-            {saving ? "Guardando..." : "Guardar cliente"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-
-
-
-// ─── CONFIGURACION ────────────────────────────────────────────────────────────
-function Configuracion() {
-  const [rutas, setRutas] = useState([]);
-  const [poblados, setPoblados] = useState([]);
-  const [toast, setToast] = useState("");
-  const [tab, setTab] = useState("rutas");
-  const [asesores, setAsesores] = useState([]);
-  const [newAsesor, setNewAsesor] = useState({ nombre: "", email: "", password_hash: "", ruta_id: "" });
-  const [editAsesor, setEditAsesor] = useState(null);
-  
-  // New ruta form
-  const [newRuta, setNewRuta] = useState({ nombre: "", estado: "" });
-  // New poblado form
-  const [newPoblado, setNewPoblado] = useState({ nombre: "", ruta_id: "" });
-  // Edit states
-  const [editRuta, setEditRuta] = useState(null);
-  const [editPoblado, setEditPoblado] = useState(null);
-
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
-
-  const load = useCallback(async () => {
-    const [r, p, a] = await Promise.all([
-      api("rutas?select=*&order=estado,nombre"),
-      api("poblados?select=*,ruta:rutas(nombre,estado)&order=nombre"),
-      api("asesores?select=*,ruta:rutas(nombre,estado)&order=nombre"),
-    ]);
-    setRutas(r);
-    setPoblados(p);
-    setAsesores(a);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const agregarRuta = async () => {
-    if (!newRuta.nombre || !newRuta.estado) return showToast("Llena nombre y estado");
-    await api("rutas", { method: "POST", body: JSON.stringify(newRuta) });
-    setNewRuta({ nombre: "", estado: "" });
-    showToast("✓ Ruta agregada");
-    load();
-  };
-
-  const agregarPoblado = async () => {
-    if (!newPoblado.nombre || !newPoblado.ruta_id) return showToast("Llena nombre y ruta");
-    await api("poblados", { method: "POST", body: JSON.stringify({ nombre: newPoblado.nombre, ruta_id: parseInt(newPoblado.ruta_id) }) });
-    setNewPoblado({ nombre: "", ruta_id: "" });
-    showToast("✓ Poblado agregado");
-    load();
-  };
-
-  const guardarRuta = async () => {
-    await api(`rutas?id=eq.${editRuta.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ nombre: editRuta.nombre, estado: editRuta.estado }) });
-    setEditRuta(null);
-    showToast("✓ Ruta actualizada");
-    load();
-  };
-
-  const guardarPoblado = async () => {
-    await api(`poblados?id=eq.${editPoblado.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ nombre: editPoblado.nombre, ruta_id: parseInt(editPoblado.ruta_id) }) });
-    setEditPoblado(null);
-    showToast("✓ Poblado actualizado");
-    load();
-  };
-
-  const agregarAsesor = async () => {
-    if (!newAsesor.nombre || !newAsesor.email || !newAsesor.password_hash || !newAsesor.ruta_id) return showToast("Llena todos los campos");
-    await api("asesores", { method: "POST", body: JSON.stringify({ ...newAsesor, ruta_id: parseInt(newAsesor.ruta_id), es_admin: false }) });
-    setNewAsesor({ nombre: "", email: "", password_hash: "", ruta_id: "" });
-    showToast("✓ Asesor agregado");
-    load();
-  };
-
-  const guardarAsesor = async () => {
-    await api(`asesores?id=eq.${editAsesor.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ nombre: editAsesor.nombre, email: editAsesor.email, password_hash: editAsesor.password_hash, ruta_id: parseInt(editAsesor.ruta_id) }) });
-    setEditAsesor(null);
-    showToast("✓ Asesor actualizado");
-    load();
-  };
-
-  const toggleAsesor = async (a) => {
-    await api(`asesores?id=eq.${a.id}`, { method: "PATCH", prefer: "return=minimal", body: JSON.stringify({ es_admin: a.es_admin }) });
-    showToast("✓ Actualizado");
-    load();
-  };
-
-  const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", boxSizing: "border-box" };
-  const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
-
-  // Group rutas by estado
-  const rutasPorEstado = rutas.reduce((acc, r) => {
-    if (!acc[r.estado]) acc[r.estado] = [];
-    acc[r.estado].push(r);
-    return acc;
-  }, {});
-
-  return (
-    <div style={{ padding: "0 0 80px" }}>
-      {/* Tabs */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.card, marginBottom: 12 }}>
-        {["rutas", "poblados", "asesores"].map(t => (
-          <div key={t} style={{ flex: 1, padding: 12, textAlign: "center", fontSize: 13, fontWeight: 600, cursor: "pointer", color: tab === t ? COLORS.primary : COLORS.muted, borderBottom: tab === t ? `2px solid ${COLORS.primary}` : "2px solid transparent" }} onClick={() => setTab(t)}>
-            {t === "rutas" ? "Rutas" : t === "poblados" ? "Poblados" : "Asesores"}
-          </div>
-        ))}
-      </div>
-
-      {toast && <div style={{ margin: "0 16px 12px", background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{toast}</div>}
-
-      {tab === "rutas" && (
-        <div style={{ padding: "0 16px" }}>
-          {/* Add new ruta */}
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.primary, marginBottom: 12 }}>+ Nueva Ruta / Estado</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div>
-                <label style={labelStyle}>Nombre de la ruta</label>
-                <input style={inputStyle} value={newRuta.nombre} onChange={e => setNewRuta(p => ({ ...p, nombre: e.target.value }))} placeholder="Ej. Ruta 5" />
-              </div>
-              <div>
-                <label style={labelStyle}>Estado</label>
-                <input style={inputStyle} value={newRuta.estado} onChange={e => setNewRuta(p => ({ ...p, estado: e.target.value }))} placeholder="Ej. Guanajuato" />
-              </div>
-              <button onClick={agregarRuta} style={{ padding: "10px", background: COLORS.primary, color: "white", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                Agregar ruta
-              </button>
-            </div>
-          </div>
-
-          {/* List rutas by estado */}
-          {Object.entries(rutasPorEstado).sort().map(([estado, rutasEst]) => (
-            <div key={estado} style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>{estado}</div>
-              <div className="card">
-                {rutasEst.map(r => (
-                  <div key={r.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
-                    {editRuta?.id === r.id ? (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        <input style={inputStyle} value={editRuta.nombre} onChange={e => setEditRuta(p => ({ ...p, nombre: e.target.value }))} />
-                        <input style={inputStyle} value={editRuta.estado} onChange={e => setEditRuta(p => ({ ...p, estado: e.target.value }))} />
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={guardarRuta} style={{ flex: 1, padding: 8, background: COLORS.accent, color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Guardar</button>
-                          <button onClick={() => setEditRuta(null)} style={{ flex: 1, padding: 8, background: "white", color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{r.nombre}</div>
-                        <button onClick={() => setEditRuta({ ...r })} style={{ padding: "5px 12px", background: "#e8f0fc", color: COLORS.primary, border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Editar</button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {tab === "asesores" && (
-        <div style={{ padding: "0 16px" }}>
-          {/* Add new asesor */}
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.primary, marginBottom: 12 }}>+ Nuevo Asesor</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div>
-                <label style={labelStyle}>Nombre</label>
-                <input style={inputStyle} value={newAsesor.nombre} onChange={e => setNewAsesor(p => ({ ...p, nombre: e.target.value }))} placeholder="Ej. Jal 5" />
-              </div>
-              <div>
-                <label style={labelStyle}>Correo</label>
-                <input style={inputStyle} type="email" value={newAsesor.email} onChange={e => setNewAsesor(p => ({ ...p, email: e.target.value }))} placeholder="correo@cobranza.com" />
-              </div>
-              <div>
-                <label style={labelStyle}>Contraseña</label>
-                <input style={inputStyle} value={newAsesor.password_hash} onChange={e => setNewAsesor(p => ({ ...p, password_hash: e.target.value }))} placeholder="Contraseña inicial" />
-              </div>
-              <div>
-                <label style={labelStyle}>Ruta</label>
-                <select style={{ ...inputStyle, background: "white" }} value={newAsesor.ruta_id} onChange={e => setNewAsesor(p => ({ ...p, ruta_id: e.target.value }))}>
-                  <option value="">Selecciona ruta...</option>
-                  {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre} — {r.estado}</option>)}
-                </select>
-              </div>
-              <button onClick={agregarAsesor} style={{ padding: "10px", background: COLORS.primary, color: "white", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                Agregar asesor
-              </button>
-            </div>
-          </div>
-
-          {/* List asesores */}
-          <div className="card">
-            {asesores.filter(a => !a.es_admin).map(a => (
-              <div key={a.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
-                {editAsesor?.id === a.id ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <input style={inputStyle} value={editAsesor.nombre} onChange={e => setEditAsesor(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre" />
-                    <input style={inputStyle} value={editAsesor.email} onChange={e => setEditAsesor(p => ({ ...p, email: e.target.value }))} placeholder="Correo" />
-                    <input style={inputStyle} value={editAsesor.password_hash} onChange={e => setEditAsesor(p => ({ ...p, password_hash: e.target.value }))} placeholder="Contraseña" />
-                    <select style={{ ...inputStyle, background: "white" }} value={editAsesor.ruta_id} onChange={e => setEditAsesor(p => ({ ...p, ruta_id: e.target.value }))}>
-                      {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre} — {r.estado}</option>)}
-                    </select>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={guardarAsesor} style={{ flex: 1, padding: 8, background: COLORS.accent, color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Guardar</button>
-                      <button onClick={() => setEditAsesor(null)} style={{ flex: 1, padding: 8, background: "white", color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{a.nombre}</div>
-                      <div style={{ fontSize: 12, color: COLORS.muted }}>{a.email}</div>
-                      <div style={{ fontSize: 12, color: COLORS.muted }}>{a.ruta?.nombre} — {a.ruta?.estado}</div>
-                    </div>
-                    <button onClick={() => setEditAsesor({ ...a })} style={{ padding: "5px 12px", background: "#e8f0fc", color: COLORS.primary, border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Editar</button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {tab === "poblados" && (
-        <div style={{ padding: "0 16px" }}>
-          {/* Add new poblado */}
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.primary, marginBottom: 12 }}>+ Nuevo Poblado</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div>
-                <label style={labelStyle}>Ruta</label>
-                <select style={{ ...inputStyle, background: "white" }} value={newPoblado.ruta_id} onChange={e => setNewPoblado(p => ({ ...p, ruta_id: e.target.value }))}>
-                  <option value="">Selecciona ruta...</option>
-                  {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre} — {r.estado}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Nombre del poblado</label>
-                <input style={inputStyle} value={newPoblado.nombre} onChange={e => setNewPoblado(p => ({ ...p, nombre: e.target.value }))} placeholder="Ej. San Pedro" />
-              </div>
-              <button onClick={agregarPoblado} style={{ padding: "10px", background: COLORS.primary, color: "white", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
-                Agregar poblado
-              </button>
-            </div>
-          </div>
-
-          {/* List poblados */}
-          <div className="card">
-            {poblados.map(p => (
-              <div key={p.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
-                {editPoblado?.id === p.id ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <input style={inputStyle} value={editPoblado.nombre} onChange={e => setEditPoblado(prev => ({ ...prev, nombre: e.target.value }))} />
-                    <select style={{ ...inputStyle, background: "white" }} value={editPoblado.ruta_id} onChange={e => setEditPoblado(prev => ({ ...prev, ruta_id: e.target.value }))}>
-                      {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre} — {r.estado}</option>)}
-                    </select>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={guardarPoblado} style={{ flex: 1, padding: 8, background: COLORS.accent, color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Guardar</button>
-                      <button onClick={() => setEditPoblado(null)} style={{ flex: 1, padding: 8, background: "white", color: COLORS.muted, border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 13, cursor: "pointer" }}>Cancelar</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>{p.nombre}</div>
-                      <div style={{ fontSize: 12, color: COLORS.muted }}>{p.ruta?.nombre} — {p.ruta?.estado}</div>
-                    </div>
-                    <button onClick={() => setEditPoblado({ ...p, ruta_id: p.ruta_id })} style={{ padding: "5px 12px", background: "#e8f0fc", color: COLORS.primary, border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Editar</button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── REPORTE SEMANAL ──────────────────────────────────────────────────────────
-function ReporteSemanal({ onClose }) {
-  const [semanas, setSemanas] = useState([]);
-  const [semanaSeleccionada, setSemanaSeleccionada] = useState(null);
-  const [estadoSeleccionado, setEstadoSeleccionado] = useState("todos");
-  const [estadosDisponibles, setEstadosDisponibles] = useState([]);
-  const [generando, setGenerando] = useState(false);
-  const [toast, setToast] = useState("");
-
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
-
-  useEffect(() => {
-    // Generate last 8 weeks
-    const today = new Date();
-    const lista = [];
-    for (let i = 0; i < 8; i++) {
-      const d = new Date(today.getTime() - i * 7 * 24 * 60 * 60 * 1000);
-      const { start, end } = getWeekBounds(d);
-      lista.push({ start, end, label: formatWeekLabel(start, end) });
-    }
-    setSemanas(lista);
-    setSemanaSeleccionada(lista[0]);
-    // Fetch available estados
-    api("rutas?select=estado").then(rutas => {
-      const estados = [...new Set(rutas.map(r => r.estado).filter(Boolean))].sort();
-      setEstadosDisponibles(estados);
-    }).catch(console.error);
-  }, []);
-
-  const loadJsPDF = () => new Promise((resolve) => {
-    if (window.jspdf) return resolve(window.jspdf.jsPDF);
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-    script.onload = () => resolve(window.jspdf.jsPDF);
-    document.head.appendChild(script);
-  });
-
-  const loadAutoTable = () => new Promise((resolve) => {
-    if (window.jspdfAutoTable) return resolve();
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
-    script.onload = resolve;
-    document.head.appendChild(script);
-  });
-
-  const generarReporte = async () => {
-    if (!semanaSeleccionada) return;
-    setGenerando(true);
-    try {
-      // Load libraries
-      const JsPDF = await loadJsPDF();
-      await loadAutoTable();
-
-      // Fetch all data
-      const startStr = toDateStr(semanaSeleccionada.start);
-      const endStr = toDateStr(semanaSeleccionada.end);
-
-      // Get all active clients with poblado and ruta
-      const clientes = await api(
-        `clientes?activo=eq.true&select=id,nombre,cobro_semana,abono_original,pago_con_intereses,poblado:poblados(nombre,numero,ruta:rutas(id,nombre,estado))`
-      );
-
-      // Get approved cobros for this week
-      const cobros = await api(
-        `cobros?aprobado=eq.true&fecha_registro=gte.${startStr}&fecha_registro=lte.${endStr}T23:59:59&select=abono,cliente:clientes(id,abono_original,cobro_semana,poblado:poblados(nombre,ruta:rutas(nombre,estado)))`
-      );
-
-      // Get renovations for this week (clients created this week that replaced older ones)
-      const renovaciones = await api(
-        `clientes?fecha_ingreso=gte.${startStr}&fecha_ingreso=lte.${endStr}&select=monto_credito,poblado:poblados(nombre,ruta:rutas(nombre,estado))`
-      );
-
-      // Group by estado
-      const estados = {};
-      clientes.forEach(cl => {
-        const estado = cl.poblado?.ruta?.estado || 'Sin estado';
-        const ruta = cl.poblado?.ruta?.nombre || 'Sin ruta';
-        const poblado = cl.poblado?.nombre || 'Sin poblado';
-        if (!estados[estado]) estados[estado] = {};
-        if (!estados[estado][ruta]) estados[estado][ruta] = {};
-        if (!estados[estado][ruta][poblado]) estados[estado][ruta][poblado] = {
-          totalClientes: 0, clientesVencidos: 0, carteraVencida: 0,
-          cobranza: 0, renovaciones: 0, excobranza: 0, valorRuta: 0, carteraTotalVencida: 0,
-          _rutaId: cl.poblado?.ruta?.id || 0,
-          _pobladoNum: cl.poblado?.numero || 0,
-        };
-        const p = estados[estado][ruta][poblado];
-        p.totalClientes++;
-        p.valorRuta += cl.pago_con_intereses || 0;
-        const vencido = (cl.cobro_semana || 0) - (cl.abono_original || 0);
-        if (vencido > 0) {
-          p.clientesVencidos++;
-          p.carteraVencida += vencido;
-          p.carteraTotalVencida += vencido;
-        }
-      });
-
-      cobros.forEach(co => {
-        const estado = co.cliente?.poblado?.ruta?.estado || 'Sin estado';
-        const ruta = co.cliente?.poblado?.ruta?.nombre || 'Sin ruta';
-        const poblado = co.cliente?.poblado?.nombre || 'Sin poblado';
-        if (!estados[estado]?.[ruta]?.[poblado]) return;
-        const p = estados[estado][ruta][poblado];
-        const abono = co.abono || 0;
-        const abonoOriginal = co.cliente?.abono_original || 0;
-        p.cobranza += abono;
-        if (abono > abonoOriginal) p.excobranza += abono - abonoOriginal;
-      });
-
-      renovaciones.forEach(r => {
-        const estado = r.poblado?.ruta?.estado || 'Sin estado';
-        const ruta = r.poblado?.ruta?.nombre || 'Sin ruta';
-        const poblado = r.poblado?.nombre || 'Sin poblado';
-        if (!estados[estado]?.[ruta]?.[poblado]) return;
-        estados[estado][ruta][poblado].renovaciones += r.monto_credito || 0;
-      });
-
-      // Generate one PDF per estado (filtered by selection)
-      const estadosFiltrados = estadoSeleccionado === "todos" 
-        ? Object.entries(estados)
-        : Object.entries(estados).filter(([e]) => e === estadoSeleccionado);
-
-      for (const [estadoNombre, rutas] of estadosFiltrados) {
-        const doc = new JsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-        const pageW = doc.internal.pageSize.getWidth();
-        let y = 15;
-
-        // Header
-        doc.setFillColor(26, 58, 92);
-        doc.rect(0, 0, pageW, 20, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text(`CIERRE SEMANAL - ${estadoNombre.toUpperCase()}`, pageW / 2, 13, { align: 'center' });
-        doc.setFontSize(9);
-        doc.text(`Semana: ${semanaSeleccionada.label}`, pageW / 2, 18, { align: 'center' });
-        y = 28;
-
-        // SECTION 1: Tabla de poblados por ruta
-        const rutasOrdenadas = Object.entries(rutas).sort((a, b) => {
-          const idA = Object.values(a[1])[0]?._rutaId || 0;
-          const idB = Object.values(b[1])[0]?._rutaId || 0;
-          return idA - idB;
-        });
-        for (const [rutaNombre, poblados] of rutasOrdenadas) {
-          doc.setTextColor(26, 58, 92);
-          doc.setFontSize(10);
-          doc.setFont('helvetica', 'bold');
-          doc.text(rutaNombre.toUpperCase(), 14, y);
-          y += 4;
-
-          const rows = Object.entries(poblados).sort((a, b) => (a[1]._pobladoNum || 0) - (b[1]._pobladoNum || 0)).map(([pob, d]) => [
-            pob,
-            d.totalClientes,
-            d.clientesVencidos,
-            `$${d.carteraVencida.toLocaleString('es-MX', { maximumFractionDigits: 0 })}`,
-          ]);
-
-          const totales = Object.values(poblados).reduce((acc, d) => {
-            acc.totalClientes += d.totalClientes;
-            acc.clientesVencidos += d.clientesVencidos;
-            acc.carteraVencida += d.carteraVencida;
-            return acc;
-          }, { totalClientes: 0, clientesVencidos: 0, carteraVencida: 0 });
-
-          rows.push([
-            'TOTAL',
-            totales.totalClientes,
-            totales.clientesVencidos,
-            `$${totales.carteraVencida.toLocaleString('es-MX', { maximumFractionDigits: 0 })}`,
-          ]);
-
-          doc.autoTable({
-            startY: y,
-            head: [['POBLACIÓN', 'CLIENTES', 'VENCIDA', 'CARTERA']],
-            body: rows,
-            theme: 'grid',
-            headStyles: { fillColor: [26, 58, 92], textColor: 255, fontSize: 8, fontStyle: 'bold' },
-            bodyStyles: { fontSize: 8 },
-            columnStyles: { 0: { cellWidth: 50 }, 1: { halign: 'center' }, 2: { halign: 'center' }, 3: { halign: 'right' } },
-            margin: { left: 14, right: 14 },
-            didParseCell: (data) => {
-              if (data.row.index === rows.length - 1) {
-                data.cell.styles.fontStyle = 'bold';
-                data.cell.styles.fillColor = [230, 240, 252];
-              }
-            },
-          });
-          y = doc.lastAutoTable.finalY + 6;
-        }
-
-        // SECTION 2: Ingreso de la semana
-        doc.addPage();
-        y = 28;
-        doc.setFillColor(26, 58, 92);
-        doc.rect(0, 0, pageW, 20, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text(`INGRESO DE LA SEMANA - ${estadoNombre.toUpperCase()}`, pageW / 2, 13, { align: 'center' });
-        doc.setFontSize(9);
-        doc.text(`Semana: ${semanaSeleccionada.label}`, pageW / 2, 18, { align: 'center' });
-
-        const ingresoRows = [];
-        let totalCobranza = 0, totalRenovaciones = 0, totalExcobranza = 0, totalValorRuta = 0, totalCarteraVencida = 0;
-
-        const rutasOrdenadas2 = Object.entries(rutas).sort((a, b) => {
-          const idA = Object.values(a[1])[0]?._rutaId || 0;
-          const idB = Object.values(b[1])[0]?._rutaId || 0;
-          return idA - idB;
-        });
-        for (const [rutaNombre, poblados] of rutasOrdenadas2) {
-          const totRuta = Object.values(poblados).reduce((acc, d) => {
-            acc.cobranza += d.cobranza;
-            acc.renovaciones += d.renovaciones;
-            acc.excobranza += d.excobranza;
-            acc.valorRuta += d.valorRuta;
-            acc.carteraVencida += d.carteraVencida;
-            return acc;
-          }, { cobranza: 0, renovaciones: 0, excobranza: 0, valorRuta: 0, carteraVencida: 0 });
-
-          const fmt2 = (n) => `$${n.toLocaleString('es-MX', { maximumFractionDigits: 2 })}`;
-          ingresoRows.push([
-            rutaNombre,
-            fmt2(totRuta.cobranza + totRuta.renovaciones + totRuta.excobranza),
-            fmt2(totRuta.cobranza),
-            fmt2(totRuta.renovaciones),
-            fmt2(totRuta.excobranza),
-            fmt2(totRuta.valorRuta),
-            fmt2(totRuta.carteraVencida),
-          ]);
-
-          totalCobranza += totRuta.cobranza;
-          totalRenovaciones += totRuta.renovaciones;
-          totalExcobranza += totRuta.excobranza;
-          totalValorRuta += totRuta.valorRuta;
-          totalCarteraVencida += totRuta.carteraVencida;
-        }
-
-        const fmt2 = (n) => `$${n.toLocaleString('es-MX', { maximumFractionDigits: 2 })}`;
-        ingresoRows.push([
-          'TOTAL',
-          fmt2(totalCobranza + totalRenovaciones + totalExcobranza),
-          fmt2(totalCobranza),
-          fmt2(totalRenovaciones),
-          fmt2(totalExcobranza),
-          fmt2(totalValorRuta),
-          fmt2(totalCarteraVencida),
-        ]);
-
-        doc.autoTable({
-          startY: y,
-          head: [['RUTA', 'TOTAL', 'COBRANZA', 'RENOVACIONES', 'EXCOBRANZA', 'VALOR RUTA', 'CARTERA VENCIDA']],
-          body: ingresoRows,
-          theme: 'grid',
-          headStyles: { fillColor: [26, 58, 92], textColor: 255, fontSize: 8, fontStyle: 'bold' },
-          bodyStyles: { fontSize: 8 },
-          columnStyles: { 0: { fontStyle: 'bold' }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
-          margin: { left: 14, right: 14 },
-          didParseCell: (data) => {
-            if (data.row.index === ingresoRows.length - 1) {
-              data.cell.styles.fontStyle = 'bold';
-              data.cell.styles.fillColor = [230, 240, 252];
-            }
-          },
-        });
-
-        // Save PDF
-        const fileName = `Reporte_${estadoNombre}_${startStr}.pdf`;
-        doc.save(fileName);
-      }
-
-      showToast(`✓ Reportes generados`);
-    } catch (e) {
-      showToast("Error: " + e.message);
-      console.error(e);
-    } finally {
-      setGenerando(false);
-    }
-  };
-
-  const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", background: "white" };
-  const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, overflowY: "auto" }}>
-      <div style={{ background: COLORS.card, margin: "20px auto", maxWidth: 480, borderRadius: 16, padding: "20px 16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Reporte Semanal</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={labelStyle}>Estado</label>
-          <select style={inputStyle} value={estadoSeleccionado} onChange={e => setEstadoSeleccionado(e.target.value)}>
-            <option value="todos">Todos los estados</option>
-            {estadosDisponibles.map(e => (
-              <option key={e} value={e}>{e}</option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label style={labelStyle}>Selecciona la semana</label>
-          <select style={inputStyle} value={semanaSeleccionada ? toDateStr(semanaSeleccionada.start) : ""} onChange={e => {
-            const s = semanas.find(s => toDateStr(s.start) === e.target.value);
-            if (s) setSemanaSeleccionada(s);
-          }}>
-            {semanas.map((s, i) => (
-              <option key={i} value={toDateStr(s.start)}>
-                {i === 0 ? `Semana actual: ${s.label}` : s.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div style={{ background: "#e8f0fc", borderRadius: 10, padding: "12px 14px", marginBottom: 16, fontSize: 13, color: COLORS.primary }}>
-          Se generará un PDF por cada estado (Jalisco, Michoacán, Querétaro) con el cierre de la semana seleccionada.
-        </div>
-
-        {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{toast}</div>}
-
-        <button
-          onClick={generarReporte}
-          disabled={generando || !semanaSeleccionada}
-          style={{ width: "100%", padding: 13, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
-        >
-          {generando ? "Generando PDFs..." : "📄 Generar reportes PDF"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── CARGA EXCEL MODAL ────────────────────────────────────────────────────────
-function CargaExcelModal({ onClose, onSaved }) {
-  const [clientes, setClientes] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState("");
-  const [rutas, setRutas] = useState([]);
-  const [poblados, setPoblados] = useState([]);
-
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
-
-  useEffect(() => {
-    Promise.all([
-      api("rutas?select=*"),
-      api("poblados?select=*"),
-    ]).then(([r, p]) => {
-      setRutas(r);
-      setPoblados(p);
-    }).catch(console.error);
-  }, []);
-
-  const handleFile = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setLoading(true);
-
-    // Load SheetJS dynamically if not already loaded
-    const loadXLSX = () => new Promise((resolve) => {
-      if (window.XLSX) return resolve();
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-      script.onload = resolve;
-      document.head.appendChild(script);
-    });
-
-    loadXLSX().then(() => {
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const XLSX = window.XLSX;
-        const wb = XLSX.read(evt.target.result, { type: 'binary', cellDates: true });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { header: 1 });
-
-        // Skip header row (row 0) and example row (row 1)
-        const rows = data.slice(1).filter(row => row[0] && row[2] && row[3]);
-        
-        const parsed = rows.map((row, i) => {
-          const rutaNombre = String(row[0] || '').trim();
-          const pobladoNombre = String(row[1] || '').trim();
-          const ruta = rutas.find(r => r.nombre.toLowerCase() === rutaNombre.toLowerCase());
-          const poblado = poblados.find(p => 
-            p.nombre.toLowerCase() === pobladoNombre.toLowerCase() && 
-            (!ruta || p.ruta_id === ruta.id)
-          );
-
-          // Parse date
-          let fecha = null;
-          if (row[8]) {
-            if (row[8] instanceof Date) {
-              fecha = row[8].toISOString().split('T')[0];
-            } else {
-              fecha = String(row[8]).trim();
-            }
-          }
-
-          const abono = parseFloat(row[6]) || 0;
-          const cobro_semana = parseFloat(row[9]) || abono;
-
-          return {
-            _row: i + 2,
-            ruta_nombre: rutaNombre,
-            poblado_nombre: pobladoNombre,
-            poblado_id: poblado?.id || null,
-            codigo: String(row[2] || '').trim(),
-            nombre: String(row[3] || '').trim().toUpperCase(),
-            monto_credito: parseFloat(row[4]) || 0,
-            pago_con_intereses: parseFloat(row[5]) || 0,
-            abono_original: abono,
-            plazo: parseInt(row[7]) || 0,
-            fecha_ingreso: fecha,
-            cobro_semana: cobro_semana,
-            num_semana: parseInt(row[10]) || 1,
-            domicilio: String(row[11] || '').trim(),
-            celular: String(row[12] || '').trim(),
-            aval_nombre: String(row[13] || '').trim(),
-            aval_domicilio: String(row[14] || '').trim(),
-            aval_celular: String(row[15] || '').trim(),
-            _valid: !!poblado && !!row[2] && !!row[3],
-            _error: !poblado ? `Poblado "${pobladoNombre}" no encontrado en "${rutaNombre}"` : !row[2] ? 'Falta código' : !row[3] ? 'Falta nombre' : null,
-          };
-        });
-
-        setClientes(parsed);
-      } catch (e) {
-        showToast("Error leyendo el archivo: " + e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    reader.readAsBinaryString(file);
-    }); // end loadXLSX
-  };
-
-  const cargar = async () => {
-    const validos = clientes.filter(c => c._valid);
-    if (!validos.length) return showToast("No hay clientes válidos para cargar");
-    setSaving(true);
-    try {
-      for (const c of validos) {
-        await api("clientes", {
-          method: "POST",
-          body: JSON.stringify({
-            poblado_id: c.poblado_id,
-            codigo: c.codigo,
-            nombre: c.nombre,
-            monto_credito: c.monto_credito,
-            pago_con_intereses: c.pago_con_intereses,
-            abono_original: c.abono_original,
-            plazo: c.plazo,
-            fecha_ingreso: c.fecha_ingreso,
-            cobro_semana: c.cobro_semana,
-            num_semana: c.num_semana,
-            domicilio: c.domicilio,
-            celular: c.celular,
-            aval_nombre: c.aval_nombre,
-            aval_domicilio: c.aval_domicilio,
-            aval_celular: c.aval_celular,
-            activo: true,
-          }),
-        });
-      }
-      showToast(`✓ ${validos.length} clientes cargados correctamente`);
-      setTimeout(() => { onSaved(); onClose(); }, 1500);
-    } catch (e) {
-      showToast("Error: " + e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const validos = clientes.filter(c => c._valid);
-  const invalidos = clientes.filter(c => !c._valid);
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, overflowY: "auto" }}>
-      <div style={{ background: COLORS.card, margin: "20px auto", maxWidth: 480, borderRadius: 16, padding: "20px 16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Cargar clientes desde Excel</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
-        </div>
-
-        <div style={{ marginBottom: 16, padding: "12px 14px", background: "#e8f0fc", borderRadius: 10, fontSize: 13, color: COLORS.primary }}>
-          Usa la plantilla oficial. Las columnas deben ser: RUTA, POBLADO, CODIGO, NOMBRE, MONTO, PAGO CON INTERESES, ABONO, PLAZO, FECHA, COBRO SEMANA, NUM SEMANA, DOMICILIO, CELULAR, AVAL, DOM AVAL, CEL AVAL
-        </div>
-
-        <input
-          type="file"
-          accept=".xlsx,.xls"
-          onChange={handleFile}
-          style={{ width: "100%", marginBottom: 16, padding: "10px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14 }}
-        />
-
-        {loading && <div style={{ textAlign: "center", color: COLORS.muted, padding: 16 }}>Leyendo archivo...</div>}
-
-        {clientes.length > 0 && (
-          <>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.accent, marginBottom: 6 }}>
-                ✓ {validos.length} clientes listos para cargar
-              </div>
-              {invalidos.length > 0 && (
-                <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.danger, marginBottom: 6 }}>
-                  ⚠️ {invalidos.length} con errores (no se cargarán)
-                </div>
-              )}
-            </div>
-
-            {/* Preview list */}
-            <div style={{ maxHeight: 300, overflowY: "auto", border: `1px solid ${COLORS.border}`, borderRadius: 10, marginBottom: 16 }}>
-              {clientes.map((c, i) => (
-                <div key={i} style={{ padding: "8px 12px", borderBottom: `1px solid ${COLORS.border}`, background: c._valid ? "white" : "#fdecea" }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: c._valid ? COLORS.text : COLORS.danger }}>{c.nombre || "Sin nombre"}</div>
-                  <div style={{ fontSize: 11, color: COLORS.muted }}>
-                    {c._valid ? `${c.ruta_nombre} › ${c.poblado_nombre} · Cód. ${c.codigo} · ${fmt(c.monto_credito)}` : c._error}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{toast}</div>}
-
-        {validos.length > 0 && (
-          <button
-            onClick={cargar}
-            disabled={saving}
-            style={{ width: "100%", padding: 13, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: "pointer" }}
-          >
-            {saving ? "Cargando..." : `✓ Cargar ${validos.length} clientes`}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── RENOVACION MODAL ─────────────────────────────────────────────────────────
-function RenovacionModal({ cliente, onClose, onSaved }) {
-  const [creditos, setCreditos] = useState([]);
-  const [selectedCredito, setSelectedCredito] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState("");
-  const [clienteActual, setClienteActual] = useState(null);
-
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
-
-  useEffect(() => {
-    Promise.all([
-      api("tipos_credito?select=*&order=monto,plazo"),
-      api(`clientes?id=eq.${cliente.id}&select=*&limit=1`),
-    ]).then(([creds, cls]) => {
-      setCreditos(creds);
-      if (cls && cls[0]) setClienteActual(cls[0]);
-    }).catch(console.error);
-  }, [cliente.id]);
-
-  const saldoPendiente = parseFloat(clienteActual?.pago_con_intereses ?? cliente.pago_con_intereses) || 0;
-  const semanasRestantes = selectedCredito
-    ? Math.ceil(saldoPendiente / (parseFloat(cliente.abono_original) || 1))
-    : 0;
-  const descuento = selectedCredito
-    ? (parseFloat(cliente.abono_original) || 0) * semanasRestantes
-    : 0;
-  const montoEntrega = selectedCredito
-    ? Math.max(0, selectedCredito.monto - descuento)
-    : 0;
-
-  const renovar = async () => {
-    if (!selectedCredito) return showToast("Selecciona un crédito");
-    setSaving(true);
-    try {
-      // 1. Mark current credit as inactive
-      await api(`clientes?id=eq.${cliente.id}`, {
-        method: "PATCH",
-        prefer: "return=minimal",
-        body: JSON.stringify({ activo: false }),
-      });
-
-      // 2. Create new credit
-      await api("clientes", {
-        method: "POST",
-        body: JSON.stringify({
-          poblado_id: cliente.poblado_id,
-          codigo: cliente.codigo,
-          nombre: cliente.nombre,
-          monto_credito: selectedCredito.monto,
-          pago_con_intereses: selectedCredito.total_credito,
-          abono_original: selectedCredito.abono,
-          plazo: selectedCredito.plazo,
-          fecha_ingreso: new Date().toISOString().split('T')[0],
-          fecha_inicio_cobro: getNextMonday().toISOString().split('T')[0],
-          cobro_semana: selectedCredito.abono,
-          num_semana: 1,
-          domicilio: cliente.domicilio,
-          celular: cliente.celular,
-          aval_nombre: cliente.aval_nombre,
-          aval_domicilio: cliente.aval_domicilio,
-          aval_celular: cliente.aval_celular,
-          activo: true,
-        }),
-      });
-
-      showToast("✓ Renovación registrada");
-      setTimeout(() => { onSaved(); onClose(); }, 1000);
-    } catch (e) {
-      showToast("Error: " + e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const inputStyle = { width: "100%", padding: "9px 12px", border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: 14, outline: "none", background: "white" };
-  const labelStyle = { fontSize: 11, fontWeight: 600, color: COLORS.muted, textTransform: "uppercase", letterSpacing: "0.05em", display: "block", marginBottom: 4 };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200, overflowY: "auto" }}>
-      <div style={{ background: COLORS.card, margin: "20px auto", maxWidth: 480, borderRadius: 16, padding: "20px 16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 17, fontWeight: 700, color: COLORS.primary }}>Renovación de crédito</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: COLORS.muted }}>✕</button>
-        </div>
-
-        {/* Cliente info */}
-        <div style={{ background: "#e8f0fc", borderRadius: 10, padding: "10px 14px", marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.primary }}>{cliente.nombre}</div>
-          <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 4 }}>
-            Saldo pendiente: <strong style={{ color: COLORS.danger }}>{fmt(saldoPendiente)}</strong>
-            {" · "}Abono semanal: <strong>{fmt(cliente.abono_original)}</strong>
-          </div>
-        </div>
-
-        {/* Credit selector */}
-        <div style={{ marginBottom: 16 }}>
-          <label style={labelStyle}>Selecciona el nuevo crédito</label>
-          <select style={inputStyle} value={selectedCredito?.id || ""} onChange={e => {
-            const c = creditos.find(c => c.id === parseInt(e.target.value));
-            setSelectedCredito(c || null);
-          }}>
-            <option value="">-- Selecciona crédito --</option>
-            {creditos.map(c => (
-              <option key={c.id} value={c.id}>
-                ${c.monto.toLocaleString('es-MX')} · {c.plazo} sem · Abono: ${c.abono.toLocaleString('es-MX')} · Total: ${c.total_credito.toLocaleString('es-MX')}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Calculation */}
-        {selectedCredito && (
-          <div style={{ background: "#f4f6f9", borderRadius: 10, padding: "12px 14px", marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.primary, marginBottom: 8 }}>Cálculo de renovación</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                <span style={{ color: COLORS.muted }}>Monto nuevo crédito</span>
-                <span style={{ fontWeight: 600 }}>{fmt(selectedCredito.monto)}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                <span style={{ color: COLORS.muted }}>Semanas restantes × abono ({semanasRestantes} × {fmt(cliente.abono_original)})</span>
-                <span style={{ fontWeight: 600, color: COLORS.danger }}>- {fmt(descuento)}</span>
-              </div>
-              <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 6, display: "flex", justifyContent: "space-between", fontSize: 15 }}>
-                <span style={{ fontWeight: 700 }}>Monto a entregar</span>
-                <span style={{ fontWeight: 700, color: COLORS.accent }}>{fmt(montoEntrega)}</span>
-              </div>
-            </div>
-            <div style={{ marginTop: 10, padding: "8px 12px", background: "#e8f5ee", borderRadius: 8, fontSize: 12, color: COLORS.accent }}>
-              Nuevo crédito: {selectedCredito.plazo} semanas · Abono: {fmt(selectedCredito.abono)} · Total: {fmt(selectedCredito.total_credito)}
-            </div>
-          </div>
-        )}
-
-        {toast && <div style={{ background: "#e8f5ee", color: COLORS.accent, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{toast}</div>}
-
-        {saldoPendiente > 0 && (
-          <div style={{ background: "#fdecea", color: COLORS.danger, padding: "10px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
-            ⚠️ El cliente aún tiene saldo pendiente de {fmt(saldoPendiente)}. Solo se puede renovar cuando liquide su crédito.
-          </div>
-        )}
-        <button
-          onClick={renovar}
-          disabled={saving || !selectedCredito || saldoPendiente > 0}
-          style={{ width: "100%", padding: 13, background: saldoPendiente > 0 ? COLORS.muted : COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: saldoPendiente > 0 ? "not-allowed" : "pointer" }}
-        >
-          {saving ? "Procesando..." : "✓ Confirmar renovación"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── ADMIN ───────────────────────────────────────────────────────────────────
 function AdminPanel({ asesor, onLogout }) {
   const [tab, setTab] = useState("pendientes");
-  const [cierres, setCierres] = useState([]);
+  const [cobros, setCobros] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
-  const [showNuevo, setShowNuevo] = useState(false);
-  const [procesando, setProcesando] = useState(null);
-  const [clienteRenovar, setClienteRenovar] = useState(null);
-  const [showCargaExcel, setShowCargaExcel] = useState(false);
-  const [showReporte, setShowReporte] = useState(false);
 
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Get cierres grouped by asesor/semana
-      const cobros = await api(
-        `cobros?enviado=eq.true&aprobado=eq.${tab === "aprobados" ? "true" : "false"}&select=*,cliente:clientes(id,nombre,codigo,cobro_semana,abono_original,pago_con_intereses,num_semana,poblado:poblados(nombre,ruta:rutas(nombre))),asesor:asesores(id,nombre)`
+      const rows = await api(
+        `cobros?enviado=eq.true&aprobado=eq.${tab === "aprobados" ? "true" : "false"}&select=*,cliente:clientes(nombre,codigo,poblado:poblados(nombre,ruta:rutas(nombre))),asesor:asesores(nombre)`
       );
-      
-      // Group by asesor
-      const grouped = {};
-      cobros.forEach(c => {
-        const key = c.asesor?.id || 'unknown';
-        if (!grouped[key]) {
-          grouped[key] = {
-            asesor: c.asesor,
-            cobros: [],
-            totalCobrado: 0,
-            totalEsperado: 0,
-          };
-        }
-        grouped[key].cobros.push(c);
-        grouped[key].totalCobrado += parseFloat(c.abono) || 0;
-        grouped[key].totalEsperado += parseFloat(c.cliente?.cobro_semana) || 0;
-      });
-      
-      setCierres(Object.values(grouped));
+      setCobros(rows);
     } catch (e) { console.error(e); }
     setLoading(false);
   }, [tab]);
 
   useEffect(() => { load(); }, [load]);
 
-  const aprobarCierre = async (grupo) => {
-    setProcesando(grupo.asesor?.id);
-    try {
-      // Process each cobro and update client data
-      for (const cobro of grupo.cobros) {
-        const cl = cobro.cliente;
-        if (!cl) continue;
-        
-        const abonoPagado = parseFloat(cobro.abono) || 0;
-        const abonoOriginal = parseFloat(cl.abono_original) || 0;
-        const cobroSemanaActual = parseFloat(cl.cobro_semana) || 0;
-        const pagoConIntereses = parseFloat(cl.pago_con_intereses) || 0;
-
-        // Calculate new values
-        const nuevoCobroSemana = cobroSemanaActual + abonoOriginal - abonoPagado;
-        const nuevoPagoIntereses = pagoConIntereses - abonoPagado;
-        const nuevaNumSemana = (cl.num_semana || 0) + 1;
-        const liquidado = nuevoPagoIntereses <= 0;
-
-        // Update client
-        await api(`clientes?id=eq.${cl.id}`, {
-          method: "PATCH",
-          prefer: "return=minimal",
-          body: JSON.stringify({
-            cobro_semana: liquidado ? 0 : Math.max(0, nuevoCobroSemana),
-            pago_con_intereses: liquidado ? 0 : Math.max(0, nuevoPagoIntereses),
-            num_semana: nuevaNumSemana,
-            activo: !liquidado,
-          }),
-        });
-
-        // Mark cobro as approved
-        await api(`cobros?id=eq.${cobro.id}`, {
-          method: "PATCH",
-          prefer: "return=minimal",
-          body: JSON.stringify({ aprobado: true }),
-        });
-      }
-
-      // Also update clients with no cobro this week (accumulate debt)
-      // Get all active clients for this asesor's ruta
-      if (grupo.cobros.length > 0) {
-        const rutaId = grupo.cobros[0]?.cliente?.poblado?.ruta?.id;
-        if (rutaId) {
-          // Get semana activa
-          const sems = await api("semanas?activa=eq.true&select=*&limit=1");
-          const semana = sems[0];
-          if (semana) {
-            // Get all active clients in this ruta
-            const allClientes = await api(
-              `clientes?activo=eq.true&select=id,cobro_semana,abono_original,pago_con_intereses,num_semana,poblado:poblados(ruta_id)&poblados.ruta_id=eq.${rutaId}`
-            );
-            const cobradosIds = new Set(grupo.cobros.map(c => c.cliente?.id));
-            
-            for (const cl of allClientes) {
-              if (!cl.poblado || cl.poblado.ruta_id !== parseInt(rutaId)) continue;
-              if (cobradosIds.has(cl.id)) continue; // Already processed
-              
-              // Client had no cobro this week - accumulate debt
-              const abonoOriginal = parseFloat(cl.abono_original) || 0;
-              const nuevoCobroSemana = (parseFloat(cl.cobro_semana) || 0) + abonoOriginal;
-              const nuevaNumSemana = (cl.num_semana || 0) + 1;
-
-              await api(`clientes?id=eq.${cl.id}`, {
-                method: "PATCH",
-                prefer: "return=minimal",
-                body: JSON.stringify({
-                  cobro_semana: nuevoCobroSemana,
-                  num_semana: nuevaNumSemana,
-                }),
-              });
-            }
-          }
-        }
-      }
-
-      showToast("✓ Cierre aprobado y datos actualizados");
-      load();
-    } catch (e) {
-      showToast("Error: " + e.message);
-      console.error(e);
-    } finally {
-      setProcesando(null);
-    }
-  };
-
-  const rechazarCierre = async (grupo) => {
-    for (const cobro of grupo.cobros) {
-      await api(`cobros?id=eq.${cobro.id}`, {
-        method: "PATCH",
-        prefer: "return=minimal",
-        body: JSON.stringify({ enviado: false }),
-      });
-    }
-    showToast("✗ Cierre rechazado");
+  const aprobar = async (id) => {
+    await api(`cobros?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ aprobado: true }), prefer: "return=minimal" });
+    showToast("✓ Aprobado");
     load();
   };
 
   const exportExcel = async () => {
     const rows = await api(
-      `cobros?enviado=eq.true&aprobado=eq.true&select=*,cliente:clientes(nombre,codigo,cobro_semana,domicilio,celular,poblado:poblados(nombre,ruta:rutas(nombre))),asesor:asesores(nombre)`
+      `cobros?enviado=eq.true&aprobado=eq.true&select=*,cliente:clientes(nombre,codigo,monto_credito,cobro_semana,domicilio,celular,poblado:poblados(nombre,ruta:rutas(nombre))),asesor:asesores(nombre)`
     );
     const headers = ["Ruta","Poblado","Código","Cliente","Domicilio","Teléfono","Cobro Semana","Abono","Pago Pendiente","Observaciones","Asesor","Fecha"];
     const lines = [headers.join(",")];
@@ -1776,113 +253,37 @@ function AdminPanel({ asesor, onLogout }) {
         </div>
       </div>
       <div className="admin-tabs">
-        {["pendientes","aprobados","buscar","config"].map(t => (
+        {["pendientes","aprobados"].map(t => (
           <div key={t} className={`admin-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {t === "pendientes" ? "Revisar" : t === "aprobados" ? "Aprobados" : t === "buscar" ? "🔍" : "⚙️"}
+            {t === "pendientes" ? "Por revisar" : "Aprobados"}
           </div>
         ))}
       </div>
-      <div style={{ padding: "10px 16px" }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => setShowNuevo(true)} style={{ flex: 1, padding: 11, background: COLORS.primary, color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", minWidth: 120 }}>
-            + Cliente nuevo
-          </button>
-          <button onClick={() => setShowCargaExcel(true)} style={{ flex: 1, padding: 11, background: COLORS.accent, color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", minWidth: 120 }}>
-            📂 Cargar Excel
-          </button>
-          <button onClick={() => setShowReporte(true)} style={{ flex: 1, padding: 11, background: "#7c3aed", color: "white", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", minWidth: 120 }}>
-            📄 Reporte PDF
-          </button>
-        </div>
-      </div>
-      {showNuevo && <NuevoClienteForm onClose={() => setShowNuevo(false)} onSaved={load} />}
-      {clienteRenovar && <RenovacionModal cliente={clienteRenovar} onClose={() => setClienteRenovar(null)} onSaved={load} />}
-      {showCargaExcel && <CargaExcelModal onClose={() => setShowCargaExcel(false)} onSaved={load} />}
-      {showReporte && <ReporteSemanal onClose={() => setShowReporte(false)} />}
-      {tab === "buscar" ? <BuscadorGlobal /> : tab === "config" ? <Configuracion /> : loading ? <div className="loading">Cargando...</div> : (
+      {loading ? <div className="loading">Cargando...</div> : (
         <div className="screen" style={{ paddingTop: 8 }}>
-          {!cierres.length && <div className="empty">Sin cierres {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
-          {cierres.map((grupo, idx) => (
-            <div key={idx} className="card" style={{ marginBottom: 12 }}>
-              {/* Cierre header */}
-              <div style={{ background: COLORS.primary, padding: "12px 16px", borderRadius: "12px 12px 0 0" }}>
-                <div style={{ color: "white", fontWeight: 700, fontSize: 15 }}>
-                  {grupo.asesor?.nombre}
-                </div>
-                <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 12, marginTop: 2 }}>
-                  {grupo.cobros.length} clientes · Cobrado: {fmt(grupo.totalCobrado)} / {fmt(grupo.totalEsperado)}
-                </div>
-                <div style={{ marginTop: 8, height: 4, background: "rgba(255,255,255,0.2)", borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${Math.min(100, grupo.totalEsperado ? (grupo.totalCobrado/grupo.totalEsperado)*100 : 0)}%`, background: "#4ade80", borderRadius: 4 }} />
-                </div>
-              </div>
-
-              {/* Client list */}
-              {grupo.cobros.map(c => {
-                const cl = c.cliente || {};
-                const po = cl.poblado || {};
-                return (
-                  <div key={c.id} className="cierre-item">
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div>
-                        <div className="cierre-title">{cl.nombre}</div>
-                        <div className="cierre-meta">{po.nombre}</div>
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: parseFloat(c.abono) > 0 ? COLORS.accent : COLORS.danger }}>
-                          {fmt(c.abono)}
-                        </div>
-                        <div style={{ fontSize: 11, color: COLORS.muted }}>/ {fmt(cl.cobro_semana)}</div>
-                      </div>
-                    </div>
-                    {c.observaciones && <div className="cierre-meta" style={{ marginTop: 4, fontStyle: "italic" }}>📝 {c.observaciones}</div>}
+          {!cobros.length && <div className="empty">Sin registros {tab === "pendientes" ? "por revisar" : "aprobados"}</div>}
+          <div className="card">
+            {cobros.map(c => {
+              const cl = c.cliente || {};
+              const po = cl.poblado || {};
+              const ru = po.ruta || {};
+              return (
+                <div key={c.id} className="cierre-item">
+                  <div className="cierre-title">{cl.nombre}</div>
+                  <div className="cierre-meta">{ru.nombre} › {po.nombre} · Asesor: {c.asesor?.nombre}</div>
+                  <div className="cierre-meta" style={{ marginTop: 4 }}>
+                    Abono: <strong>{fmt(c.abono)}</strong> · Esperado: {fmt(cl.cobro_semana)}
+                    {c.observaciones && <> · Nota: {c.observaciones}</>}
                   </div>
-                );
-              })}
-
-              {/* Actions */}
-              {tab === "pendientes" && (
-                <div className="cierre-actions" style={{ padding: "12px 16px" }}>
-                  <button
-                    className="btn-reject"
-                    onClick={() => rechazarCierre(grupo)}
-                    disabled={procesando === grupo.asesor?.id}
-                  >
-                    ✗ Rechazar
-                  </button>
-                  <button
-                    className="btn-approve"
-                    onClick={() => aprobarCierre(grupo)}
-                    disabled={procesando === grupo.asesor?.id}
-                  >
-                    {procesando === grupo.asesor?.id ? "Procesando..." : "✓ Aprobar cierre"}
-                  </button>
+                  {tab === "pendientes" && (
+                    <div className="cierre-actions">
+                      <button className="btn-approve" onClick={() => aprobar(c.id)}>✓ Aprobar</button>
+                    </div>
+                  )}
                 </div>
-              )}
-              {tab === "aprobados" && (
-                <div style={{ padding: "8px 16px 12px" }}>
-                  {grupo.cobros.filter(c => {
-                    const cl = c.cliente || {};
-                    // Show renovar button only if client paid their full cobro_semana
-                    const abonoPagado = parseFloat(c.abono) || 0;
-                    const cobroSemana = parseFloat(cl.cobro_semana) || 0;
-                    return cl.id && cobroSemana > 0 && abonoPagado >= cobroSemana;
-                  }).map(c => {
-                    const cl = c.cliente || {};
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() => setClienteRenovar(cl)}
-                        style={{ width: "100%", marginBottom: 6, padding: "8px 12px", background: "#e8f0fc", color: COLORS.primary, border: `1px solid ${COLORS.primary}`, borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
-                      >
-                        🔄 Renovar: {cl.nombre}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ))}
+              );
+            })}
+          </div>
         </div>
       )}
       <Toast msg={toast} />
@@ -1893,7 +294,6 @@ function AdminPanel({ asesor, onLogout }) {
 // ─── ASESOR: RUTAS ───────────────────────────────────────────────────────────
 function RutasScreen({ asesor, onLogout, onSelectRuta }) {
   const [rutas, setRutas] = useState([]);
-  const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1906,44 +306,6 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
           rows = await api(`rutas?id=eq.${asesor.ruta_id}&select=*,poblados(id)`);
         }
         setRutas(rows);
-
-        // Cargar stats por ruta
-        const statsMap = {};
-        for (const r of rows) {
-          // Cartera activa = suma de pago_con_intereses de clientes activos
-          const clientes = await api(
-            `clientes?activo=eq.true&select=pago_con_intereses,cobro_semana,abono_original,poblado_id,fecha_ingreso,plazo`
-          );
-          // Filtrar solo clientes de esta ruta
-          const pobladoIds = (r.poblados || []).map(p => p.id);
-          const clientesRuta = clientes.filter(c => pobladoIds.includes(c.poblado_id));
-
-          // Cartera activa = suma de saldos pendientes de todos los clientes
-          const totalClientes = clientesRuta.length;
-          const carteraActiva = clientesRuta.reduce((s, c) => s + (c.pago_con_intereses || 0), 0);
-          // Cobro semanal = suma de cobro_semana (lo que deben pagar incluyendo adeudos)
-          const cobroSemana = clientesRuta.reduce((s, c) => s + (c.cobro_semana || 0), 0);
-          // Cartera vencida = cobro_semana de clientes con mas de 1 pago pendiente (cobro_semana > abono_original)
-          const hoy = new Date();
-          const carteraVencida = clientesRuta.reduce((s, c) => {
-            const cobro = c.cobro_semana || 0;
-            const abono = c.abono_original || 0;
-            // Caso 1: debe mas de una semana
-            if (abono > 0 && cobro > abono) return s + cobro;
-            // Caso 2: debe 1 semana pero ya paso su plazo (solo si tiene plazo definido > 0)
-            if (cobro > 0 && c.fecha_ingreso && parseInt(c.plazo) > 0) {
-              const partes = c.fecha_ingreso.split('-');
-              const fechaFin = new Date(parseInt(partes[0]), parseInt(partes[1]) - 1, parseInt(partes[2]));
-              fechaFin.setDate(fechaFin.getDate() + parseInt(c.plazo) * 7);
-              const hoyLocal = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
-              if (hoyLocal > fechaFin) return s + cobro;
-            }
-            return s;
-          }, 0);
-
-          statsMap[r.id] = { totalClientes, carteraActiva, cobroSemana, carteraVencida };
-        }
-        setStats(statsMap);
       } catch (e) { console.error(e); }
       setLoading(false);
     };
@@ -1964,40 +326,15 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
         <div className="screen">
           <div className="section-title">Selecciona una ruta</div>
           <div className="card">
-            {rutas.map(r => {
-              const s = stats[r.id] || {};
-              return (
-                <div key={r.id} className="list-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }} onClick={() => onSelectRuta(r)}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                    <div>
-                      <div className="list-item-name">{r.nombre}</div>
-                      <div className="list-item-sub">{r.estado} · {(r.poblados || []).length} poblados</div>
-                    </div>
-                    <div className="list-item-arrow">›</div>
-                  </div>
-                  {s.carteraActiva !== undefined && (
-                    <div style={{ display: 'flex', gap: 8, width: '100%', flexWrap: 'wrap' }}>
-                      <div style={{ flex: 1, background: '#f0f4ff', borderRadius: 8, padding: '6px 10px' }}>
-                        <div style={{ fontSize: 10, color: COLORS.muted, marginBottom: 2 }}>Total clientes</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.primary }}>{s.totalClientes || 0}</div>
-                      </div>
-                      <div style={{ flex: 1, background: '#e8f0fc', borderRadius: 8, padding: '6px 10px' }}>
-                        <div style={{ fontSize: 10, color: COLORS.muted, marginBottom: 2 }}>Cartera activa</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.primary }}>{fmt(s.carteraActiva)}</div>
-                      </div>
-                      <div style={{ flex: 1, background: '#e8f5ee', borderRadius: 8, padding: '6px 10px' }}>
-                        <div style={{ fontSize: 10, color: COLORS.muted, marginBottom: 2 }}>Cobro semanal</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.accent }}>{fmt(s.cobroSemana)}</div>
-                      </div>
-                      <div style={{ flex: 1, background: s.carteraVencida > 0 ? '#fdecea' : '#f4f6f9', borderRadius: 8, padding: '6px 10px' }}>
-                        <div style={{ fontSize: 10, color: COLORS.muted, marginBottom: 2 }}>Cartera vencida</div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: s.carteraVencida > 0 ? COLORS.danger : COLORS.muted }}>{fmt(s.carteraVencida)}</div>
-                      </div>
-                    </div>
-                  )}
+            {rutas.map(r => (
+              <div key={r.id} className="list-item" onClick={() => onSelectRuta(r)}>
+                <div>
+                  <div className="list-item-name">{r.nombre}</div>
+                  <div className="list-item-sub">{r.estado} · {(r.poblados || []).length} poblados</div>
                 </div>
-              );
-            })}
+                <div className="list-item-arrow">›</div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -2006,22 +343,25 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
 }
 
 // ─── ASESOR: POBLADOS ─────────────────────────────────────────────────────────
-function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado, selectedWeek, onSelectWeek }) {
+function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado }) {
   const [poblados, setPoblados] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [semana, setSemana] = useState(null);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const pobs = await api(`poblados?ruta_id=eq.${ruta.id}&select=*,clientes(id,activo,fecha_inicio_cobro)`);
+        const [pobs, sems] = await Promise.all([
+          api(`poblados?ruta_id=eq.${ruta.id}&select=*,clientes(id)`),
+          api("semanas?activa=eq.true&select=*&limit=1"),
+        ]);
         setPoblados(pobs);
+        setSemana(sems[0] || null);
       } catch (e) { console.error(e); }
       setLoading(false);
     };
     load();
   }, [ruta]);
-
-const editable = true;
 
   return (
     <div className="app">
@@ -2030,15 +370,9 @@ const editable = true;
         <button className="header-back" onClick={onBack}>‹ Rutas</button>
         <div style={{ flex: 1, marginLeft: 12 }}>
           <div className="header-title">{ruta.nombre}</div>
-          <div className="header-sub">{selectedWeek ? selectedWeek.label : ""}</div>
+          {semana && <div className="header-sub">Semana {new Date(semana.fecha_inicio).toLocaleDateString("es-MX")} – {new Date(semana.fecha_fin).toLocaleDateString("es-MX")}</div>}
         </div>
       </div>
-      <WeekSelector selectedWeek={selectedWeek} onSelect={onSelectWeek} />
-      {false && (
-        <div style={{ padding: "8px 16px", background: "#fef3e8", fontSize: 12, color: COLORS.warn, fontWeight: 600 }}>
-          📋 Semana anterior — solo lectura
-        </div>
-      )}
       {loading ? <div className="loading">Cargando...</div> : (
         <div className="screen">
           <div className="section-title">Poblados ({poblados.length})</div>
@@ -2047,7 +381,7 @@ const editable = true;
               <div key={p.id} className="list-item" onClick={() => onSelectPoblado(p)}>
                 <div>
                   <div className="list-item-name">{p.nombre}</div>
-                  <div className="list-item-sub">{(p.clientes || []).filter(c => c.activo && (!c.fecha_inicio_cobro || c.fecha_inicio_cobro <= new Date().toISOString().split('T')[0])).length} clientes</div>
+                  <div className="list-item-sub">{(p.clientes || []).length} clientes</div>
                 </div>
                 <div className="list-item-arrow">›</div>
               </div>
@@ -2060,11 +394,9 @@ const editable = true;
 }
 
 // ─── ASESOR: COBROS ───────────────────────────────────────────────────────────
-function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
+function CobrosScreen({ asesor, ruta, poblado, onBack }) {
   const [clientes, setClientes] = useState([]);
-  const [clientesFiltrados, setClientesFiltrados] = useState([]);
   const [semana, setSemana] = useState(null);
-  const [todosAprobados, setTodosAprobados] = useState(false);
   const [cobros, setCobros] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2079,25 +411,12 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
     const load = async () => {
       try {
         const [cls, sems] = await Promise.all([
-          api(`clientes?poblado_id=eq.${poblado.id}&activo=eq.true&or=(fecha_inicio_cobro.is.null,fecha_inicio_cobro.lte.${new Date().toISOString().split('T')[0]})&select=*&order=nombre`),
+          api(`clientes?poblado_id=eq.${poblado.id}&activo=eq.true&select=*&order=nombre`),
           api("semanas?activa=eq.true&select=*&limit=1"),
         ]);
-        // Initialize cobros with cobro_semana as default for all clients
-        setCobros(prev => {
-          const defaults = {};
-          cls.forEach(cl => {
-            if (!prev[cl.id]) {
-              defaults[cl.id] = { abono: cl.cobro_semana, obs: "" };
-            }
-          });
-          return { ...defaults, ...prev };
-        });
         setClientes(cls);
-        setClientesFiltrados(cls);
         const sem = sems[0] || null;
         setSemana(sem);
-        // If selectedWeek differs from active semana, fetch or create semana for that week
-
 
         if (sem) {
           const existing = await api(
@@ -2111,9 +430,6 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
           });
           setCobros(map);
           setEnviados(envMap);
-          // Check if any cobro from THIS semana is approved - if so, week is read-only
-          const anyApproved = existing.some(c => c.aprobado && c.semana_id === sem?.id);
-          setTodosAprobados(anyApproved);
         }
       } catch (e) { console.error(e); }
       setLoading(false);
@@ -2176,8 +492,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
   const totalAbonos = clientes.reduce((s, cl) => s + (parseFloat(cobros[cl.id]?.abono) || 0), 0);
   const todosEnviados = clientes.every(cl => enviados[cl.id]);
 
-  const hoyLunes = true;
-  const isReadOnly = (selectedWeek ? !isEditable(selectedWeek.start) : false) || todosAprobados;
+  const hoyLunes = new Date().getDay() === 1;
 
   if (loading) return (
     <div className="app"><style>{css}</style><div className="loading">Cargando clientes...</div></div>
@@ -2194,7 +509,6 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
         </div>
       </div>
 
-      <BuscadorPoblado pobladoId={poblado.id} clientes={clientes} onFiltrar={setClientesFiltrados} />
       <div style={{ padding: "12px 16px" }}>
         <div className="summary-card">
           <div className="summary-row">
@@ -2222,19 +536,14 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
         </div>
       )}
 
-      {isReadOnly && (
-        <div style={{ padding: "8px 16px", background: "#fef3e8", margin: "0 16px 8px", borderRadius: 10, fontSize: 13, color: COLORS.warn, fontWeight: 600 }}>
-          📋 Semana anterior — solo lectura
-        </div>
-      )}
-      {todosEnviados && !isReadOnly && (
-        <div style={{ padding: "8px 16px", background: todosAprobados ? "#e8f5ee" : "#fef3e8", margin: "0 16px 8px", borderRadius: 10, fontSize: 13, color: todosAprobados ? COLORS.accent : COLORS.warn, fontWeight: 600 }}>
-          {todosAprobados ? "✓ Cierre aprobado" : "⏳ Cierre enviado — pendiente de aprobación"}
+      {todosEnviados && (
+        <div style={{ padding: "8px 16px", background: "#e8f5ee", margin: "0 16px 8px", borderRadius: 10, fontSize: 13, color: COLORS.accent, fontWeight: 600 }}>
+          ✓ Cierre enviado — pendiente de aprobación
         </div>
       )}
 
       <div className="card" style={{ margin: "0 16px", marginBottom: 80 }}>
-        {clientesFiltrados.map(cl => {
+        {clientes.map(cl => {
           const cobro = cobros[cl.id] || {};
           const abono = parseFloat(cobro.abono) || 0;
           const pagado = abono > 0;
@@ -2251,16 +560,6 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
                   {pagado && !yaEnviado && <span className="badge badge-blue">Abonado</span>}
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <div style={{ flex: 1, background: "#e8f5ee", borderRadius: 8, padding: "5px 10px" }}>
-                  <div style={{ fontSize: 10, color: COLORS.muted }}>Ha pagado</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.accent }}>{fmt((cl.abono_original * cl.plazo) - cl.pago_con_intereses)}</div>
-                </div>
-                <div style={{ flex: 1, background: "#fdecea", borderRadius: 8, padding: "5px 10px" }}>
-                  <div style={{ fontSize: 10, color: COLORS.muted }}>Saldo pendiente</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.danger }}>{fmt(cl.pago_con_intereses)}</div>
-                </div>
-              </div>
               <div className="cobro-meta">
                 <span>Plazo: {cl.plazo} sem</span>
                 <span>Sem {cl.num_semana}</span>
@@ -2271,9 +570,9 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
                 <input
                   className={`cobro-input ${pagado ? "pagado" : ""}`}
                   type="number"
-                  value={cobro.abono ?? ""}
+                  value={cobro.abono || ""}
                   onChange={e => updateCobro(cl.id, "abono", e.target.value)}
-                  placeholder={cl.cobro_semana || "0"}
+                  placeholder="0"
                   disabled={yaEnviado}
                 />
                 <div className="cobro-esperado">/ {fmt(cl.cobro_semana)}</div>
@@ -2290,7 +589,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
         })}
       </div>
 
-      {!todosEnviados && !isReadOnly && (
+      {!todosEnviados && (
         <div className="bottom-bar">
           <button className="btn-save" onClick={() => guardar(false)} disabled={saving}>
             {saving ? "Guardando..." : "💾 Pre-guardar"}
@@ -2316,27 +615,8 @@ export default function App() {
   const [asesor, setAsesor] = useState(() => {
     try { return JSON.parse(localStorage.getItem("asesor_session")) || null; } catch { return null; }
   });
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [pendingSync, setPendingSync] = useState(getOfflineQueue().length);
-
-  useEffect(() => {
-    const handleOnline = async () => {
-      setIsOnline(true);
-      const synced = await syncOfflineQueue();
-      setPendingSync(getOfflineQueue().length);
-      if (synced > 0) alert(`✓ Se sincronizaron ${synced} registros pendientes`);
-    };
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
   const [ruta, setRuta] = useState(null);
   const [poblado, setPoblado] = useState(null);
-  const [selectedWeek, setSelectedWeek] = useState(null);
 
   const handleLogin = (a) => {
     localStorage.setItem("asesor_session", JSON.stringify(a));
@@ -2352,12 +632,7 @@ export default function App() {
 
   if (!asesor) return <><style>{css}</style><Login onLogin={handleLogin} /></>;
   if (asesor.es_admin) return <AdminPanel asesor={asesor} onLogout={handleLogout} />;
-  if (!isOnline) return (
-    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, background: '#f59e0b', color: 'white', padding: '6px 16px', fontSize: 12, fontWeight: 700, textAlign: 'center', zIndex: 9999 }}>
-      📵 Sin conexión — {pendingSync > 0 ? `${pendingSync} cobros pendientes de sincronizar` : 'los cobros se guardarán localmente'}
-    </div>
-  ) || null;
-  if (poblado) return <CobrosScreen asesor={asesor} ruta={ruta} poblado={poblado} onBack={() => setPoblado(null)} selectedWeek={selectedWeek} />;
-  if (ruta) return <PobladosScreen asesor={asesor} ruta={ruta} onBack={() => setRuta(null)} onSelectPoblado={p => setPoblado(p)} selectedWeek={selectedWeek} onSelectWeek={setSelectedWeek} />;
+  if (poblado) return <CobrosScreen asesor={asesor} ruta={ruta} poblado={poblado} onBack={() => setPoblado(null)} />;
+  if (ruta) return <PobladosScreen asesor={asesor} ruta={ruta} onBack={() => setRuta(null)} onSelectPoblado={p => setPoblado(p)} />;
   return <RutasScreen asesor={asesor} onLogout={handleLogout} onSelectRuta={r => setRuta(r)} />;
 }
