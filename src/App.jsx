@@ -2162,7 +2162,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
   const todosEnviados = clientes.every(cl => enviados[cl.id]);
 
   const hoyLunes = true;
-  const isReadOnly = semana ? false : true;
+  const isReadOnly = (!semana && selectedWeek !== null) || todosAprobados;
 
   if (loading) return (
     <div className="app"><style>{css}</style><div className="loading">Cargando clientes...</div></div>
