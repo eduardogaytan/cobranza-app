@@ -2104,7 +2104,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
       setLoading(false);
     };
     load();
-  }, [poblado, asesor, semana?.id]);
+  }, [poblado.id, asesor.id]);
 
   const updateCobro = (clienteId, field, value) => {
     setCobros(prev => ({
@@ -2162,7 +2162,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
   const todosEnviados = clientes.every(cl => enviados[cl.id]);
 
   const hoyLunes = true;
-  const isReadOnly = (!semana && selectedWeek !== null) || todosAprobados;
+  const isReadOnly = semana ? false : true;
 
   if (loading) return (
     <div className="app"><style>{css}</style><div className="loading">Cargando clientes...</div></div>
