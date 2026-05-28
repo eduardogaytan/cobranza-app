@@ -2021,7 +2021,7 @@ function PobladosScreen({ asesor, ruta, onBack, onSelectPoblado, selectedWeek, o
     load();
   }, [ruta]);
 
-  const editable = selectedWeek ? isEditable(selectedWeek.start) : true;
+const editable = true;
 
   return (
     <div className="app">
