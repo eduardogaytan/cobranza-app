@@ -2034,7 +2034,7 @@ const editable = true;
         </div>
       </div>
       <WeekSelector selectedWeek={selectedWeek} onSelect={onSelectWeek} />
-      {!editable && (
+      {false && (
         <div style={{ padding: "8px 16px", background: "#fef3e8", fontSize: 12, color: COLORS.warn, fontWeight: 600 }}>
           📋 Semana anterior — solo lectura
         </div>
