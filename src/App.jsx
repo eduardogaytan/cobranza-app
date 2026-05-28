@@ -210,29 +210,22 @@ function toDateStr(date) {
 }
 
 function isEditable(weekStart) {
+  const now = new Date();
 
-  // Fecha real de México para evitar problemas de UTC en Vercel
-  const mexicoNow = new Date(
-    new Date().toLocaleString("en-US", {
-      timeZone: "America/Mexico_City"
-    })
-  );
+  const { start: currentStart } = getWeekBounds(now);
 
-  // Inicio de semana actual
-  const { start: currentStart } = getWeekBounds(mexicoNow);
-
-  // Inicio de semana pasada
-  const prevDate = new Date(mexicoNow);
+  const prevDate = new Date(now);
   prevDate.setDate(prevDate.getDate() - 7);
-
   const { start: prevStart } = getWeekBounds(prevDate);
 
-  // Formato comparable
-  const startStr = toDateStr(new Date(weekStart));
-  const currentStr = toDateStr(currentStart);
-  const prevStr = toDateStr(prevStart);
+  // Comparar usando componentes locales para evitar desfases UTC
+  const toLocal = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-  // Permitir editar semana actual y pasada
+  const startStr = toLocal(new Date(weekStart));
+  const currentStr = toLocal(currentStart);
+  const prevStr = toLocal(prevStart);
+
   return (
     startStr === currentStr ||
     startStr === prevStr
