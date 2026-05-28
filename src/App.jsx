@@ -210,20 +210,33 @@ function toDateStr(date) {
 }
 
 function isEditable(weekStart) {
-  const today = new Date();
-  const todayStr = toDateStr(today);
-  const startStr = toDateStr(weekStart);
-  
-  // Current week always editable
-  const { start: currentStart } = getWeekBounds(today);
+
+  // Fecha real de México para evitar problemas de UTC en Vercel
+  const mexicoNow = new Date(
+    new Date().toLocaleString("en-US", {
+      timeZone: "America/Mexico_City"
+    })
+  );
+
+  // Inicio de semana actual
+  const { start: currentStart } = getWeekBounds(mexicoNow);
+
+  // Inicio de semana pasada
+  const prevDate = new Date(mexicoNow);
+  prevDate.setDate(prevDate.getDate() - 7);
+
+  const { start: prevStart } = getWeekBounds(prevDate);
+
+  // Formato comparable
+  const startStr = toDateStr(new Date(weekStart));
   const currentStr = toDateStr(currentStart);
-  
-  // Previous week editable only on Monday
-  const { start: prevStart } = getWeekBounds(new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000));
   const prevStr = toDateStr(prevStart);
-  const isMonday = today.getDay() === 1;
-  
-  return startStr === currentStr || (isMonday && startStr === prevStr);
+
+  // Permitir editar semana actual y pasada
+  return (
+    startStr === currentStr ||
+    startStr === prevStr
+  );
 }
 
 // ─── WEEK SELECTOR COMPONENT ─────────────────────────────────────────────────
