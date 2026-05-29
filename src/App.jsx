@@ -227,6 +227,21 @@ function toDateStr(date) {
   return date.toISOString().split('T')[0];
 }
 
+// ─── REGLA ÚNICA DE CARTERA VENCIDA ──────────────────────────────────────────
+// Un cliente entra a cartera vencida si cumple CUALQUIERA de estas condiciones:
+//   1. cobro_semana >= abono_original * 2  (2 o más pagos acumulados)
+//   2. num_semana > plazo AND cobro_semana > 0  (crédito expirado con saldo)
+// El monto que aporta a la cartera vencida es su cobro_semana completo.
+function esCarteraVencida(cl) {
+  const cobro = parseFloat(cl.cobro_semana) || 0;
+  const abono = parseFloat(cl.abono_original) || 0;
+  const semana = parseInt(cl.num_semana) || 0;
+  const plazo = parseInt(cl.plazo) || 0;
+  if (abono > 0 && cobro >= abono * 2) return true;
+  if (plazo > 0 && semana > plazo && cobro > 0) return true;
+  return false;
+}
+
 function isEditable(weekStart) {
   const now = new Date();
 
@@ -363,7 +378,7 @@ function BuscadorGlobal() {
       setLoading(true);
       try {
         const rows = await api(
-          `clientes?activo=eq.true&or=(nombre.ilike.*${encodeURIComponent(query)}*,codigo.ilike.*${encodeURIComponent(query)}*)&select=id,nombre,codigo,cobro_semana,pago_con_intereses,celular,abono_original,poblado:poblados(nombre,ruta:rutas(nombre))&limit=20`
+          `clientes?activo=eq.true&or=(nombre.ilike.*${encodeURIComponent(query)}*,codigo.ilike.*${encodeURIComponent(query)}*)&select=id,nombre,codigo,cobro_semana,pago_con_intereses,celular,abono_original,num_semana,plazo,poblado:poblados(nombre,ruta:rutas(nombre))&limit=20`
         );
         setResultados(rows);
       } catch(e) { console.error(e); }
@@ -395,7 +410,8 @@ function BuscadorGlobal() {
           {resultados.map(cl => {
             const po = cl.poblado || {};
             const ru = po.ruta || {};
-            const vencido = (cl.cobro_semana || 0) - (cl.abono_original || 0);
+            const enVencida = esCarteraVencida(cl);
+            const vencido = enVencida ? (parseFloat(cl.cobro_semana) || 0) : 0;
             return (
               <div key={cl.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -414,9 +430,9 @@ function BuscadorGlobal() {
                     <div style={{ fontSize: 10, color: COLORS.muted }}>Saldo pendiente</div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.danger }}>{fmt(cl.pago_con_intereses)}</div>
                   </div>
-                  <div style={{ flex: 1, background: vencido > 0 ? "#fef3e8" : "#e8f5ee", borderRadius: 8, padding: "5px 10px" }}>
+                  <div style={{ flex: 1, background: enVencida ? "#fef3e8" : "#e8f5ee", borderRadius: 8, padding: "5px 10px" }}>
                     <div style={{ fontSize: 10, color: COLORS.muted }}>Cartera vencida</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: vencido > 0 ? COLORS.warn : COLORS.accent }}>{fmt(Math.max(0, vencido))}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: enVencida ? COLORS.warn : COLORS.accent }}>{fmt(vencido)}</div>
                   </div>
                 </div>
               </div>
@@ -974,7 +990,7 @@ function ReporteSemanal({ onClose }) {
 
       // Get all active clients with poblado and ruta
       const clientes = await api(
-        `clientes?activo=eq.true&select=id,nombre,cobro_semana,abono_original,pago_con_intereses,poblado:poblados(nombre,numero,ruta:rutas(id,nombre,estado))`
+        `clientes?activo=eq.true&select=id,nombre,cobro_semana,abono_original,pago_con_intereses,num_semana,plazo,poblado:poblados(nombre,numero,ruta:rutas(id,nombre,estado))`
       );
 
       // Get approved cobros for this week
@@ -1004,11 +1020,11 @@ function ReporteSemanal({ onClose }) {
         const p = estados[estado][ruta][poblado];
         p.totalClientes++;
         p.valorRuta += cl.pago_con_intereses || 0;
-        const vencido = (cl.cobro_semana || 0) - (cl.abono_original || 0);
-        if (vencido > 0) {
+        if (esCarteraVencida(cl)) {
+          const cobro = parseFloat(cl.cobro_semana) || 0;
           p.clientesVencidos++;
-          p.carteraVencida += vencido;
-          p.carteraTotalVencida += vencido;
+          p.carteraVencida += cobro;
+          p.carteraTotalVencida += cobro;
         }
       });
 
@@ -1929,7 +1945,7 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
         // Cargar stats: un solo query de clientes para todas las rutas
         try {
           const todosClientes = await api(
-            `clientes?activo=eq.true&select=pago_con_intereses,cobro_semana,abono_original,poblado_id,fecha_ingreso,plazo`
+            `clientes?activo=eq.true&select=pago_con_intereses,cobro_semana,abono_original,num_semana,plazo,poblado_id,fecha_ingreso`
           );
           const hoy = new Date();
           const statsMap = {};
@@ -1941,10 +1957,8 @@ function RutasScreen({ asesor, onLogout, onSelectRuta }) {
             const carteraActiva = clientesRuta.reduce((s, c) => s + (parseFloat(c.pago_con_intereses) || 0), 0);
             const cobroSemana = clientesRuta.reduce((s, c) => s + (parseFloat(c.cobro_semana) || 0), 0);
             const carteraVencida = clientesRuta.reduce((s, c) => {
-              const cobro = parseFloat(c.cobro_semana) || 0;
-              const abono = parseFloat(c.abono_original) || 0;
-              if (abono > 0 && cobro > abono) return s + (cobro - abono);
-              return s;
+              if (!esCarteraVencida(c)) return s;
+              return s + (parseFloat(c.cobro_semana) || 0);
             }, 0);
 
             statsMap[r.id] = { totalClientes, carteraActiva, cobroSemana, carteraVencida };
