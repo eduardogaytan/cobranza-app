@@ -1,13 +1,21 @@
 import { useState, useEffect, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = "https://uyrgczbcpxtucpdenqpi.supabase.co";
-const SUPABASE_KEY = "sb_publishable_T1RfV6_6m7_VgPttwO-QKw_8FdLV0OY";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
+
+// Cliente oficial de Supabase — maneja sesión y tokens automáticamente
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const api = async (path, options = {}) => {
+  // Usar el JWT del usuario autenticado; si no hay sesión, usar la anon key
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? SUPABASE_KEY;
+
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: {
       apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       Prefer: options.prefer || "return=representation",
       ...options.headers,
@@ -44,6 +52,8 @@ function addToOfflineQueue(item) {
 async function syncOfflineQueue() {
   const queue = getOfflineQueue();
   if (!queue.length) return 0;
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? SUPABASE_KEY;
   let synced = 0;
   const remaining = [];
   for (const item of queue) {
@@ -53,7 +63,7 @@ async function syncOfflineQueue() {
         headers: {
           'Content-Type': 'application/json',
           'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Authorization': `Bearer ${token}`,
           'Prefer': item.prefer || 'return=minimal',
         },
         body: item.body,
@@ -286,10 +296,16 @@ function Login({ onLogin }) {
     setLoading(true);
     setError("");
     try {
-      const rows = await api(
-        `asesores?email=eq.${encodeURIComponent(email)}&password_hash=eq.${encodeURIComponent(pass)}&select=*`
-      );
-      if (!rows.length) throw new Error("Correo o contraseña incorrectos");
+      // 1. Autenticar con Supabase Auth
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: pass,
+      });
+      if (authError) throw new Error("Correo o contraseña incorrectos");
+
+      // 2. Obtener el perfil del asesor para tener ruta_id, es_admin, etc.
+      const rows = await api(`asesores?email=eq.${encodeURIComponent(email.trim())}&select=*`);
+      if (!rows.length) throw new Error("Asesor no encontrado en el sistema");
       onLogin(rows[0]);
     } catch (e) {
       setError(e.message);
@@ -2298,11 +2314,35 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [asesor, setAsesor] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("asesor_session")) || null; } catch { return null; }
-  });
+  const [asesor, setAsesor] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true); // evita flash de pantalla login
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingSync, setPendingSync] = useState(getOfflineQueue().length);
+
+  // Restaurar sesión activa al cargar la app
+  useEffect(() => {
+    const restoreSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.email) {
+        try {
+          const rows = await api(`asesores?email=eq.${encodeURIComponent(session.user.email)}&select=*`);
+          if (rows.length) setAsesor(rows[0]);
+        } catch { /* sesión inválida, mostrar login */ }
+      }
+      setAuthLoading(false);
+    };
+    restoreSession();
+
+    // Escuchar cambios de sesión (expiración, cierre desde otra pestaña)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        setAsesor(null);
+        setRuta(null);
+        setPoblado(null);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     const handleOnline = async () => {
@@ -2319,21 +2359,24 @@ export default function App() {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
   const [ruta, setRuta] = useState(null);
   const [poblado, setPoblado] = useState(null);
   const [selectedWeek, setSelectedWeek] = useState(null);
 
   const handleLogin = (a) => {
-    localStorage.setItem("asesor_session", JSON.stringify(a));
+    // Supabase Auth ya guardó la sesión; solo actualizar estado local
     setAsesor(a);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("asesor_session");
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     setAsesor(null);
     setRuta(null);
     setPoblado(null);
   };
+
+  if (authLoading) return <><style>{css}</style><div className="loading">Cargando...</div></>;
 
   if (!asesor) return <><style>{css}</style><Login onLogin={handleLogin} /></>;
   if (asesor.es_admin) return <AdminPanel asesor={asesor} onLogout={handleLogout} />;
