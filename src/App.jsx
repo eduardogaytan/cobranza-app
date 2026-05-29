@@ -2111,7 +2111,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
           const defaults = {};
           cls.forEach(cl => {
             if (!prev[cl.id]) {
-              defaults[cl.id] = { abono: cl.cobro_semana, obs: "" };
+            defaults[cl.id] = { abono: String(cl.cobro_semana || 0), obs: "" };
             }
           });
           return { ...defaults, ...prev };
@@ -2160,7 +2160,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
       for (const cl of clientes) {
         if (enviados[cl.id]) continue;
         const cobro = cobros[cl.id] || {};
-        const abono = cobro.abono !== undefined && cobro.abono !== "" 
+        const abono = parseFloat(cobro.abono) || 0;
   ? parseFloat(cobro.abono) 
   : (parseFloat(cl.cobro_semana) || 0);
         const payload = {
