@@ -2160,7 +2160,9 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
       for (const cl of clientes) {
         if (enviados[cl.id]) continue;
         const cobro = cobros[cl.id] || {};
-        const abono = parseFloat(cobro.abono) || 0;
+        const abono = cobro.abono !== undefined && cobro.abono !== "" 
+  ? parseFloat(cobro.abono) 
+  : (parseFloat(cl.cobro_semana) || 0);
         const payload = {
           cliente_id: cl.id,
           semana_id: semana.id,
