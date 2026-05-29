@@ -219,6 +219,11 @@ Eduardo trabaja así:
 - [ ] Notificaciones push para asesores (recordatorio de cierre)
 - [ ] Dashboard de cartera vencida por estado en tiempo real
 - [ ] App móvil nativa (actualmente es web responsive)
+- [ ] ## Seguridad — PRIORIDAD INMEDIATA
+
+- [ ] 1. Mover SUPABASE_KEY a variable de entorno en Vercel (VITE_SUPABASE_KEY)
+- [ ] 2. Activar Row Level Security (RLS) en todas las tablas de Supabase
+- [ ] 3. Reemplazar login actual por Supabase Auth
 
 ---
 
