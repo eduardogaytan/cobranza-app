@@ -97,12 +97,16 @@ aval_nombre, aval_domicilio, aval_celular
 - `pago_con_intereses`: saldo total pendiente
 - `num_semana`: número de semana actual del crédito
 
-**Regla crítica de cartera vencida:**
-```
-cartera_vencida = cobro_semana - abono_original
-```
-Solo es cartera vencida si `cobro_semana > abono_original`. Si es <= 0, el cliente está al corriente.
+## Regla de cartera vencida
 
+Un cliente está en cartera vencida si cumple CUALQUIERA de estas condiciones:
+
+1. `cobro_semana > abono_original` — debe más de una semana, o pagó menos de su abono semanal
+2. `num_semana >= plazo AND cobro_semana > 0` — el plazo del crédito venció y debe aunque sea $1
+
+El monto que aporta a cartera vencida es su `cobro_semana` completo.
+
+Función en App.jsx: `esCarteraVencida(cl)` — esta es la fuente de verdad. El Excel manual puede no coincidir.
 ### `cobros`
 Registro de cada abono capturado por un asesor.
 ```
