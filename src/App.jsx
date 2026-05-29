@@ -1723,13 +1723,13 @@ function AdminPanel({ asesor, onLogout }) {
           if (semana) {
             // Get all active clients in this ruta
             const allClientes = await api(
-              clientes?activo=eq.true&poblado_id=in.(${await api(`poblados?ruta_id=eq.${rutaId}&select=id`).then(ps => ps.map(p => p.id).join(",") || "0")})&select=id,cobro_semana,abono_original,pago_con_intereses,num_semana,poblado_id`
-              );
+  `clientes?activo=eq.true&poblado_id=in.(${await api(`poblados?ruta_id=eq.${rutaId}&select=id`).then(ps => ps.map(p => p.id).join(",") || "0")})&select=id,cobro_semana,abono_original,pago_con_intereses,num_semana,poblado_id`
+);
             const cobradosIds = new Set(grupo.cobros.map(c => c.cliente?.id));
             
             console.log(`[aprobarCierre] rutaId=${rutaId}, total clientes activos cargados=${allClientes.length}`);
             for (const cl of allClientes) {
-              if (!cl.poblado || cl.poblado.ruta_id !== parseInt(rutaId)) continue;
+           if (!cl.poblado || cl.poblado.ruta_id !== parseInt(rutaId)) continue;
               if (cobradosIds.has(cl.id)) continue;
 
               console.log(`[aprobarCierre] Acumulando deuda: cliente id=${cl.id}`);
