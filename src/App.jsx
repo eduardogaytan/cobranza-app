@@ -5,7 +5,15 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_KEY;
 
 // Cliente oficial de Supabase — maneja sesión y tokens automáticamente
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Guard: si las env vars no están definidas (ej. build de Vercel sin configurar),
+// createClient lanza excepción y rompe toda la app. Se valida antes.
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error("⚠️  Faltan variables de entorno: VITE_SUPABASE_URL y/o VITE_SUPABASE_KEY");
+}
+const supabase = createClient(
+  SUPABASE_URL || "https://placeholder.supabase.co",
+  SUPABASE_KEY || "placeholder"
+);
 
 const api = async (path, options = {}) => {
   // Usar el JWT del usuario autenticado; si no hay sesión, usar la anon key
@@ -2314,22 +2322,29 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
+  // ── Todos los useState primero (reglas de hooks de React) ──────────────────
   const [asesor, setAsesor] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true); // evita flash de pantalla login
+  const [authLoading, setAuthLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [pendingSync, setPendingSync] = useState(getOfflineQueue().length);
+  const [ruta, setRuta] = useState(null);
+  const [poblado, setPoblado] = useState(null);
+  const [selectedWeek, setSelectedWeek] = useState(null);
 
-  // Restaurar sesión activa al cargar la app
+  // ── Restaurar sesión activa al cargar la app ───────────────────────────────
   useEffect(() => {
     const restoreSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.email) {
-        try {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user?.email) {
           const rows = await api(`asesores?email=eq.${encodeURIComponent(session.user.email)}&select=*`);
           if (rows.length) setAsesor(rows[0]);
-        } catch { /* sesión inválida, mostrar login */ }
+        }
+      } catch {
+        // Sesión inválida o env vars no configuradas → mostrar login
+      } finally {
+        setAuthLoading(false);
       }
-      setAuthLoading(false);
     };
     restoreSession();
 
@@ -2344,6 +2359,7 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // ── Listeners de conectividad ──────────────────────────────────────────────
   useEffect(() => {
     const handleOnline = async () => {
       setIsOnline(true);
@@ -2360,12 +2376,7 @@ export default function App() {
     };
   }, []);
 
-  const [ruta, setRuta] = useState(null);
-  const [poblado, setPoblado] = useState(null);
-  const [selectedWeek, setSelectedWeek] = useState(null);
-
   const handleLogin = (a) => {
-    // Supabase Auth ya guardó la sesión; solo actualizar estado local
     setAsesor(a);
   };
 
