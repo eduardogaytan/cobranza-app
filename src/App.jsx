@@ -238,7 +238,7 @@ function esCarteraVencida(cl) {
   const semana = parseInt(cl.num_semana) || 0;
   const plazo = parseInt(cl.plazo) || 0;
   // Sin plazo o sin abono definido → datos incompletos, no aplica
-  if (abono <= 0 || plazo <= 0) return false;
+  if (plazo > 0 && semana >= plazo && cobro > 0) return true;
   if (cobro >= abono * 2) return true;
   if (semana > plazo && cobro > 0) return true;
   return false;
