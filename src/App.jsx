@@ -240,7 +240,7 @@ function esCarteraVencida(cl) {
   // Sin plazo o sin abono definido → datos incompletos, no aplica
   if (plazo > 0 && semana >= plazo && cobro > 0) return true;
   if (cobro >= abono * 2) return true;
-  if (semana > plazo && cobro > 0) return true;
+  if (semana >= plazo && cobro > 0) return true;
   return false;
 }
 
