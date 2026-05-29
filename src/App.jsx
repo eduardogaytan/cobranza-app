@@ -2160,7 +2160,9 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
       for (const cl of clientes) {
         if (enviados[cl.id]) continue;
         const cobro = cobros[cl.id] || {};
-       const abono = parseFloat(cobro.abono) !== 0 ? parseFloat(cobro.abono) : (parseFloat(cl.cobro_semana) || 0);
+      const abono = (cobro.abono !== undefined && cobro.abono !== "" && cobro.abono !== "0" && parseFloat(cobro.abono) !== 0)
+  ? parseFloat(cobro.abono)
+  : parseFloat(cl.cobro_semana) || 0;
         const payload = {
           cliente_id: cl.id,
           semana_id: semana.id,
@@ -2295,7 +2297,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
                 <input
                   className={`cobro-input ${pagado ? "pagado" : ""}`}
                   type="number"
-                  value={cobro.abono ?? ""}
+                  value={cobro.abono ?? cl.cobro_semana ?? ""}
                   onChange={e => updateCobro(cl.id, "abono", e.target.value)}
                   placeholder={cl.cobro_semana || "0"}
                   disabled={yaEnviado}
