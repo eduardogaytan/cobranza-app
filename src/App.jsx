@@ -2111,7 +2111,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
           const defaults = {};
           cls.forEach(cl => {
             if (!prev[cl.id]) {
-            defaults[cl.id] = { abono: String(cl.cobro_semana || 0), obs: "" };
+            defaults[cl.id] = { abono: String(cl.cobro_semana ?? 0), obs: "" };
             }
           });
           return { ...defaults, ...prev };
