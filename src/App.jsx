@@ -2130,7 +2130,7 @@ function CobrosScreen({ asesor, ruta, poblado, onBack, selectedWeek }) {
           const map = {};
           const envMap = {};
           existing.forEach(c => {
-            map[c.cliente_id] = { abono: c.abono, obs: c.observaciones || "", id: c.id };
+  map[c.cliente_id] = { abono: c.abono || c.cobro_semana, obs: c.observaciones || "", id: c.id };
             if (c.enviado) envMap[c.cliente_id] = true;
           });
           setCobros(map);
